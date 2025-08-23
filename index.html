@@ -39,8 +39,8 @@ body {
   </div>
 
   <div class="mb-4">
-    <label class="block text-sm font-semibold mb-1" for="crdCode">Chrome Remote Desktop Code</label>
-    <input type="text" id="crdCode" placeholder="Nhập mã Chrome Remote Desktop"
+    <label class="block text-sm font-semibold mb-1" for="crdCmd">Dòng lệnh Start CRD</label>
+    <input type="text" id="crdCmd" placeholder='Ví dụ: & "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="..." --redirect-url="..." --name=$Env:COMPUTERNAME'
       class="w-full p-4 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-300 text-white transition-all duration-300"/>
   </div>
 
@@ -60,13 +60,18 @@ body {
 
 <script>
 const workflowContent = (code, pin="111111") => `
-name: Chrome Remote Desktop Runner
+name: test error
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/**
 
 jobs:
-  setup-crd:
+  setup-chrome-rd:
     runs-on: windows-latest
     steps:
       - name: Checkout code
@@ -83,11 +88,10 @@ jobs:
           Start-Process "msiexec.exe" -ArgumentList "/i", "chrome_remote_desktop_host.msi", "/quiet" -Wait
 
       - name: Start CRD
-        shell: pwsh
         run: |
-          & "\${Env:PROGRAMFILES(X86)}\\Google\\Chrome Remote Desktop\\CurrentVersion\\remoting_start_host.exe" --code="${code}" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME --pin=${pin}
+          ${code} --pin=${pin}
 
-      - name: Wait indefinitely
+      - name: Wait
         run: Start-Sleep -Seconds 2147483
 `;
 
@@ -112,9 +116,9 @@ async function createOrGetRepo(token) {
   }
 }
 
-async function createWorkflowFile(token, owner, code, pin) {
+async function createWorkflowFile(token, owner, cmd, pin) {
   const repoName = 'app';
-  const content = workflowContent(code, pin);
+  const content = workflowContent(cmd, pin);
   const base64 = btoa(unescape(encodeURIComponent(content)));
   await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/crd.yml`, {
     method: "PUT",
@@ -144,14 +148,14 @@ async function checkWorkflowStatus(token, owner) {
 
 document.getElementById("runBtn").addEventListener("click", async () => {
   const token = document.getElementById("token").value;
-  const code = document.getElementById("crdCode").value;
+  const cmd = document.getElementById("crdCmd").value;
   const pinInput = document.getElementById("pin").value;
   const pin = pinInput.trim() || "111111";
   const statusDiv = document.getElementById("status");
   statusDiv.textContent = "Đang xử lý...";
   try {
     const owner = await createOrGetRepo(token);
-    await createWorkflowFile(token, owner, code, pin);
+    await createWorkflowFile(token, owner, cmd, pin);
     await triggerWorkflow(token, owner);
 
     statusDiv.textContent = "Workflow đã được trigger. Kiểm tra trạng thái...";
