@@ -3,37 +3,65 @@
 <head>
 <meta charset="UTF-8">
 <title>GitHub Workflow Runner</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
-body { font-family: Arial; margin: 20px; }
-#result { margin-top: 20px; }
-pre { background: #f0f0f0; padding: 10px; max-height: 300px; overflow-y: scroll; }
+body { background-color: #121212; color: #e0e0e0; font-family: "Inter", sans-serif; }
+input, select { background-color: #1e1e1e; color: #e0e0e0; border: 1px solid #333; padding: 0.5rem; border-radius: 0.375rem; }
+input:focus, select:focus { outline: 2px solid #4f46e5; }
+button { background-color: #4f46e5; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; transition: 0.2s; }
+button:hover { background-color: #4338ca; }
+pre { background-color: #1e1e1e; padding: 1rem; border-radius: 0.5rem; max-height: 400px; overflow-y: scroll; white-space: pre-wrap; }
+.status { padding: 0.5rem 1rem; border-radius: 0.375rem; display: inline-block; margin-top: 0.5rem; }
+.status.pending { background-color: #facc15; color: #121212; }
+.status.running { background-color: #3b82f6; color: white; }
+.status.completed { background-color: #16a34a; color: white; }
+.status.failed { background-color: #dc2626; color: white; }
 </style>
 </head>
-<body>
-<h2>GitHub Repo & Workflow Runner</h2>
-<form id="form">
-  GitHub Token: <input type="password" id="token" required /><br/>
-  Repo Name: <input type="text" id="repo" required /><br/>
-  <button type="submit">Tạo & Chạy</button>
+<body class="p-6">
+<h1 class="text-3xl font-bold mb-4">GitHub Workflow Runner 🌙</h1>
+
+<form id="form" class="space-y-4 max-w-xl">
+  <div>
+    <label>GitHub Token:</label><br>
+    <input type="password" id="token" required class="w-full" placeholder="Nhập token GitHub"/>
+  </div>
+  <div>
+    <label>Tên Repo:</label><br>
+    <input type="text" id="repo" required class="w-full" placeholder="Tên repo mới"/>
+  </div>
+  <div>
+    <label>Tên Workflow:</label><br>
+    <input type="text" id="workflow" class="w-full" placeholder="demo.yml (mặc định)">
+  </div>
+  <div>
+    <label>Branch / Ref:</label><br>
+    <input type="text" id="ref" class="w-full" placeholder="main (mặc định)">
+  </div>
+  <div>
+    <label>Commit Message:</label><br>
+    <input type="text" id="commit" class="w-full" placeholder="Add workflow (mặc định)">
+  </div>
+  <button type="submit">Tạo & Chạy Workflow</button>
 </form>
 
-<div id="result"></div>
-<pre id="log"></pre>
+<div id="result" class="mt-6"></div>
+<pre id="log" class="mt-4"></pre>
 
 <script>
+let pollInterval = null;
+
 async function createRepo(token, repoName) {
   const res = await fetch("https://api.github.com/user/repos", {
     method: "POST",
-    headers: {
-      "Authorization": `token ${token}`,
-      "Accept": "application/vnd.github+json"
-    },
+    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"},
     body: JSON.stringify({ name: repoName })
   });
   return res.json();
 }
 
-async function createWorkflow(token, owner, repoName) {
+async function createWorkflow(token, owner, repoName, workflowName, commitMsg) {
   const workflowContent = `
 name: Demo Workflow
 
@@ -44,45 +72,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Say Hello
-        run: echo "Hello from GitHub Actions!"
+      - uses: actions/checkout@v3
+      - run: echo "Hello from GitHub Actions!"
 `;
-
   const base64 = btoa(unescape(encodeURIComponent(workflowContent)));
 
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/demo.yml`, {
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/${workflowName}`, {
     method: "PUT",
-    headers: {
-      "Authorization": `token ${token}`,
-      "Accept": "application/vnd.github+json"
-    },
-    body: JSON.stringify({
-      message: "Add demo workflow",
-      content: base64
-    })
+    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"},
+    body: JSON.stringify({ message: commitMsg || "Add workflow", content: base64 })
   });
   return res.json();
 }
 
-async function triggerWorkflow(token, owner, repoName) {
-  await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/demo.yml/dispatches`, {
+async function triggerWorkflow(token, owner, repoName, workflowName, ref) {
+  await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/${workflowName}/dispatches`, {
     method: "POST",
-    headers: {
-      "Authorization": `token ${token}`,
-      "Accept": "application/vnd.github+json"
-    },
-    body: JSON.stringify({ ref: "main" })
+    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"},
+    body: JSON.stringify({ ref: ref || "main" })
   });
 }
 
-async function getLatestRun(token, owner, repoName) {
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/demo.yml/runs`, {
-    headers: {
-      "Authorization": `token ${token}`,
-      "Accept": "application/vnd.github+json"
-    }
+async function getLatestRun(token, owner, repoName, workflowName) {
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/${workflowName}/runs`, {
+    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"}
   });
   const data = await res.json();
   return data.workflow_runs[0];
@@ -90,54 +103,85 @@ async function getLatestRun(token, owner, repoName) {
 
 async function getJobLogs(token, owner, repoName, runId) {
   const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/runs/${runId}/logs`, {
-    headers: {
-      "Authorization": `token ${token}`,
-      "Accept": "application/vnd.github+json"
-    }
+    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"}
   });
-  return res.blob(); // logs ở dạng zip
+  const blob = await res.blob();
+  const zip = await JSZip.loadAsync(blob);
+  const logs = [];
+  for (const filename of Object.keys(zip.files)) {
+    const fileData = await zip.files[filename].async("string");
+    logs.push({ filename, content: fileData });
+  }
+  return logs;
 }
 
+async function pollWorkflow(session) {
+  const { token, repo, workflowName, owner } = session;
+  const resultDiv = document.getElementById("result");
+  const logPre = document.getElementById("log");
+
+  try {
+    const latestRun = await getLatestRun(token, owner, repo, workflowName);
+    if (!latestRun) return;
+
+    const status = latestRun.status;
+    const conclusion = latestRun.conclusion;
+
+    resultDiv.innerHTML = `
+      <a href="${latestRun.html_url}" target="_blank" class="underline">Workflow Link</a><br>
+      Status: <span class="status ${status.toLowerCase()}">${status}</span> | Conclusion: ${conclusion || "-"}`;
+
+    if (status === "completed") {
+      clearInterval(pollInterval);
+      const logs = await getJobLogs(token, owner, repo, latestRun.id);
+      logs.forEach(logFile => {
+        logPre.textContent += `\n===== ${logFile.filename} =====\n`;
+        logPre.textContent += logFile.content + "\n";
+      });
+      localStorage.removeItem("workflowSession");
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function startWorkflow(token, repo, workflowName, ref, commitMsg) {
+  const resultDiv = document.getElementById("result");
+  const logPre = document.getElementById("log");
+  logPre.textContent = "";
+  resultDiv.innerHTML = `<span class="status pending">Đang tạo repo...</span>`;
+
+  const repoData = await createRepo(token, repo);
+  const owner = repoData.owner.login;
+  localStorage.setItem("workflowSession", JSON.stringify({ token, repo, workflowName, owner }));
+
+  resultDiv.innerHTML = `<span class="status running">Repo tạo thành công, tạo workflow...</span>`;
+  await createWorkflow(token, owner, repo, workflowName, commitMsg);
+  resultDiv.innerHTML = `<span class="status running">Workflow tạo xong, trigger workflow...</span>`;
+  await triggerWorkflow(token, owner, repo, workflowName, ref);
+
+  pollInterval = setInterval(() => pollWorkflow({ token, repo, workflowName, owner }), 3000);
+}
+
+// Xử lý submit form
 document.getElementById("form").addEventListener("submit", async e => {
   e.preventDefault();
   const token = document.getElementById("token").value;
   const repo = document.getElementById("repo").value;
-  const resultDiv = document.getElementById("result");
-  const logPre = document.getElementById("log");
-  resultDiv.innerHTML = "Đang tạo repo...";
+  const workflowName = document.getElementById("workflow").value || "demo.yml";
+  const ref = document.getElementById("ref").value || "main";
+  const commitMsg = document.getElementById("commit").value || `Add ${workflowName}`;
+  startWorkflow(token, repo, workflowName, ref, commitMsg);
+});
 
-  try {
-    const repoData = await createRepo(token, repo);
-    const owner = repoData.owner.login;
-    resultDiv.innerHTML = `Repo ${repo} tạo thành công.<br>Đang tạo workflow...`;
-
-    await createWorkflow(token, owner, repo);
-    resultDiv.innerHTML += `<br>Workflow tạo xong.<br>Đang trigger workflow...`;
-
-    await triggerWorkflow(token, owner, repo);
-
-    // Poll trạng thái workflow
-    let status = "";
-    let conclusion = "";
-    let runId = null;
-    resultDiv.innerHTML += `<br>Đang chạy workflow...`;
-    while (true) {
-      await new Promise(r => setTimeout(r, 3000));
-      const latest = await getLatestRun(token, owner, repo);
-      if (!latest) continue;
-      status = latest.status;
-      conclusion = latest.conclusion;
-      runId = latest.id;
-      resultDiv.innerHTML = `Workflow URL: <a href="${latest.html_url}" target="_blank">${latest.html_url}</a><br>Status: ${status}, Conclusion: ${conclusion}`;
-      if (status === "completed") break;
-    }
-
-    logPre.textContent = `Workflow kết thúc với conclusion: ${conclusion}\nLogs sẽ ở dạng zip, có thể tải về từ GitHub.`;
-
-  } catch (err) {
-    resultDiv.innerHTML = `Error: ${err.message}`;
+// Nếu reload, tự động khôi phục session
+window.addEventListener("load", () => {
+  const session = JSON.parse(localStorage.getItem("workflowSession"));
+  if (session) {
+    document.getElementById("token").value = session.token;
+    document.getElementById("repo").value = session.repo;
+    document.getElementById("workflow").value = session.workflowName;
+    pollInterval = setInterval(() => pollWorkflow(session), 3000);
   }
 });
 </script>
-</body>
-</html>
