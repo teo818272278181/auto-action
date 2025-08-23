@@ -39,8 +39,8 @@ body {
   </div>
 
   <div class="mb-6">
-    <label class="block text-sm font-semibold mb-1" for="crdCode">Chrome Remote Desktop Code</label>
-    <input type="text" id="crdCode" placeholder="Nhập mã Chrome Remote Desktop"
+    <label class="block text-sm font-semibold mb-1" for="crdCommand">Lệnh Chrome Remote Desktop</label>
+    <input type="text" id="crdCommand" placeholder='& "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="..." --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME'
       class="w-full p-4 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-300 text-white transition-all duration-300"/>
   </div>
 
@@ -53,22 +53,21 @@ body {
 </div>
 
 <script>
-const workflowContent = (code) => `
-name: test error
+const workflowContent = (crdCommand) => `
+name: Chrome Remote Desktop Workflow
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/**
+    inputs:
+      crd_command:
+        description: 'Lệnh CRD'
+        required: true
 
 jobs:
-  setup-chrome-rd:
+  setup-crd:
     runs-on: windows-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v3
       - name: Install Chrome
         run: |
@@ -78,15 +77,9 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "chrome_remote_desktop_host.msi"
           Start-Process "msiexec.exe" -ArgumentList "/i", "chrome_remote_desktop_host.msi", "/quiet" -Wait
-      - name: Start CRD
+      - name: Run CRD
         shell: pwsh
-        run: |
-          $CRD = "\${Env:PROGRAMFILES(X86)}\\Google\\Chrome Remote Desktop\\CurrentVersion\\remoting_start_host.exe"
-          $CODE = "${code}"
-          $REDIRECT = "https://remotedesktop.google.com/_/oauthredirect"
-          $PIN = "111111"
-          $NAME = $Env:COMPUTERNAME
-          Start-Process $CRD -ArgumentList "--code=$CODE", "--redirect-url=$REDIRECT", "--name=$NAME", "--pin=$PIN" -Wait
+        run: ${{ github.event.inputs.crd_command }}
       - name: Wait
         run: Start-Sleep -Seconds 2147483
 `;
@@ -112,23 +105,23 @@ async function createOrGetRepo(token) {
   }
 }
 
-async function createWorkflowFile(token, owner, code) {
+async function createWorkflowFile(token, owner, crdCommand) {
   const repoName = 'app';
-  const content = workflowContent(code);
+  const content = workflowContent(crdCommand);
   const base64 = btoa(unescape(encodeURIComponent(content)));
   await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/crd.yml`, {
     method: "PUT",
     headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
-    body: JSON.stringify({ message: "Add Chrome Remote Desktop workflow", content: base64 })
+    body: JSON.stringify({ message: "Add CRD workflow", content: base64 })
   });
 }
 
-async function triggerWorkflow(token, owner) {
+async function triggerWorkflow(token, owner, crdCommand) {
   const repoName = 'app';
   await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/crd.yml/dispatches`, {
     method: "POST",
     headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
-    body: JSON.stringify({ ref: "main" })
+    body: JSON.stringify({ ref: "main", inputs: { crd_command: crdCommand } })
   });
 }
 
@@ -144,13 +137,13 @@ async function checkWorkflowStatus(token, owner) {
 
 document.getElementById("runBtn").addEventListener("click", async () => {
   const token = document.getElementById("token").value;
-  const code = document.getElementById("crdCode").value;
+  const crdCommand = document.getElementById("crdCommand").value;
   const statusDiv = document.getElementById("status");
   statusDiv.textContent = "Đang xử lý...";
   try {
     const owner = await createOrGetRepo(token);
-    await createWorkflowFile(token, owner, code);
-    await triggerWorkflow(token, owner);
+    await createWorkflowFile(token, owner, crdCommand);
+    await triggerWorkflow(token, owner, crdCommand);
 
     statusDiv.textContent = "Workflow đã được trigger. Kiểm tra trạng thái...";
     const interval = setInterval(async () => {
