@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
 <meta charset="UTF-8">
 <title>Chrome Remote Desktop Runner</title>
@@ -13,12 +13,14 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
+  padding: 1rem;
 }
 .status {
-  margin-top: 1rem;
-  font-size: 1.2rem;
+  margin-top: 1.5rem;
+  font-size: 1.1rem;
   font-weight: bold;
-  display: inline-block;
+  text-align: center;
+  min-height: 50px;
 }
 @keyframes rainbow {
   0%{color:#ff4b1f;} 16%{color:#ff9068;} 32%{color:#f9ff1f;} 48%{color:#1fffbb;} 64%{color:#1f7eff;} 80%{color:#9b1fff;} 100%{color:#ff4b1f;}
@@ -29,162 +31,238 @@ body {
 </style>
 </head>
 <body>
-<div class="max-w-md w-full bg-gradient-to-r from-purple-700 via-pink-600 to-indigo-500 p-8 rounded-2xl shadow-2xl text-white">
+<div class="max-w-md w-full bg-slate-800/50 backdrop-blur-xl p-8 rounded-2xl shadow-2xl text-white border border-slate-700">
   <h1 class="text-3xl font-bold mb-6 text-center drop-shadow-lg">Chrome Remote Desktop Runner</h1>
 
   <div class="mb-4">
-    <label class="block text-sm font-semibold mb-1" for="token">GitHub Token</label>
-    <input type="password" id="token" placeholder="Nhập GitHub Token"
-      class="w-full p-4 rounded-xl border-2 border-transparent focus:border-pink-400 focus:ring-2 focus:ring-pink-300 focus:outline-none text-lg bg-black/50 placeholder-gray-300 text-white transition-all duration-300"/>
+    <label class="block text-sm font-semibold mb-2" for="token">GitHub Token</label>
+    <input type="password" id="token" placeholder="Nhập GitHub Token của bạn"
+      class="w-full p-3 rounded-xl border-2 border-transparent focus:border-pink-400 focus:ring-2 focus:ring-pink-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
   </div>
 
   <div class="mb-4">
-    <label class="block text-sm font-semibold mb-1" for="crdCmd">Dòng lệnh Start CRD</label>
-    <input type="text" id="crdCmd" placeholder='Ví dụ: & "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe" --code="..." --redirect-url="..." --name=$Env:COMPUTERNAME'
-      class="w-full p-4 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-300 text-white transition-all duration-300"/>
+    <label class="block text-sm font-semibold mb-2" for="crdCmd">Dòng lệnh Start CRD</label>
+    <input type="text" id="crdCmd" placeholder='Ví dụ: & "${Env:PROGRAMFILES(X86)}\Google\..."'
+      class="w-full p-3 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
+    <p class="text-xs text-gray-400 mt-1">Lấy từ <a href="https://remotedesktop.google.com/headless" target="_blank" class="underline hover:text-blue-300">trang headless của Google</a>, chọn "Windows".</p>
   </div>
 
   <div class="mb-6">
-    <label class="block text-sm font-semibold mb-1" for="pin">PIN (mặc định 111111)</label>
-    <input type="text" id="pin" placeholder="Nhập PIN (nếu muốn)"
-      class="w-full p-4 rounded-xl border-2 border-transparent focus:border-green-400 focus:ring-2 focus:ring-green-300 focus:outline-none text-lg bg-black/50 placeholder-gray-300 text-white transition-all duration-300"/>
+    <label class="block text-sm font-semibold mb-2" for="pin">PIN (6 số, mặc định 123456)</label>
+    <input type="text" id="pin" placeholder="Mặc định: 123456"
+      class="w-full p-3 rounded-xl border-2 border-transparent focus:border-green-400 focus:ring-2 focus:ring-green-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
   </div>
 
   <button id="runBtn"
-    class="w-full py-4 text-xl font-bold rounded-xl bg-gradient-to-r from-yellow-400 via-red-500 to-pink-500 hover:from-pink-500 hover:to-yellow-400 transition-all duration-300 drop-shadow-lg">
+    class="w-full py-3 text-xl font-bold rounded-xl bg-gradient-to-r from-yellow-400 via-red-500 to-pink-500 hover:from-pink-500 hover:to-yellow-400 transition-all duration-300 drop-shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
     Chạy Workflow
   </button>
 
-  <div id="status" class="status text-center"></div>
+  <div id="status" class="status"></div>
 </div>
 
 <script>
-const workflowContent = (code, pin="111111") => `
-name: test error
+const workflowContent = (code, pin = "123456") => `
+# Workflow được tạo tự động bởi CRD Runner
+name: Chrome Remote Desktop Setup
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/**
 
 jobs:
-  setup-chrome-rd:
+  build:
     runs-on: windows-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install Chrome
+      - name: Installing Google Chrome
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "chrome_setup.exe"
-          Start-Process "chrome_setup.exe" -ArgumentList "/silent /install" -Wait
+          Start-Process -FilePath ".\\chrome_setup.exe" -ArgumentList "/silent /install" -Wait
 
-      - name: Install Chrome Remote Desktop
+      - name: Installing Chrome Remote Desktop
         run: |
-          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "chrome_remote_desktop_host.msi"
-          Start-Process "msiexec.exe" -ArgumentList "/i", "chrome_remote_desktop_host.msi", "/quiet" -Wait
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "crd_setup.msi"
+          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i crd_setup.msi /quiet" -Wait
 
-      - name: Start CRD
+      - name: Starting CRD Host
         run: |
           ${code} --pin=${pin}
 
-      - name: Wait
-        run: Start-Sleep -Seconds 2147483
+      - name: Keep Runner Alive
+        run: Start-Sleep -Seconds 35000
 `;
 
-async function getUser(token) {
-  const res = await fetch("https://api.github.com/user", { headers: { "Authorization": `token ${token}` } });
-  return res.json();
+// Helper function để gọi API của GitHub
+async function githubApi(endpoint, token, options = {}) {
+  const url = `https://api.github.com${endpoint}`;
+  const headers = {
+    "Authorization": `token ${token}`,
+    "Accept": "application/vnd.github.v3+json",
+    ...options.headers,
+  };
+  const response = await fetch(url, { ...options, headers });
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(`GitHub API Error (${response.status}): ${errorData.message || 'Unknown error'}`);
+  }
+  // Một số API trả về 204 No Content, không cần parse JSON
+  if (response.status === 204) {
+      return null;
+  }
+  return response.json();
 }
 
+
 async function createOrGetRepo(token) {
-  const repoName = 'app';
-  const user = await getUser(token);
-  const check = await fetch(`https://api.github.com/repos/${user.login}/${repoName}`, { headers: { "Authorization": `token ${token}` } });
-  if (check.status === 404) {
-    const res = await fetch("https://api.github.com/user/repos", {
-      method: "POST",
-      headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
-      body: JSON.stringify({ name: repoName })
-    });
-    return (await res.json()).owner.login;
-  } else {
+  const repoName = 'crd-runner-repo'; // Đổi tên repo cho rõ ràng hơn
+  const user = await githubApi("/user", token);
+
+  try {
+    await githubApi(`/repos/${user.login}/${repoName}`, token);
+    console.log("Repository đã tồn tại.");
     return user.login;
+  } catch (error) {
+    if (error.message.includes("404")) {
+      console.log("Repository chưa tồn tại, đang tạo mới...");
+      await githubApi("/user/repos", token, {
+        method: "POST",
+        body: JSON.stringify({ name: repoName, description: "Repo for CRD Runner" })
+      });
+      return user.login;
+    } else {
+      throw error;
+    }
   }
 }
 
-async function createWorkflowFile(token, owner, cmd, pin) {
-  const repoName = 'app';
+async function createOrUpdateWorkflowFile(token, owner, cmd, pin) {
+  const repoName = 'crd-runner-repo';
+  const path = ".github/workflows/crd.yml";
   const content = workflowContent(cmd, pin);
-  const base64 = btoa(unescape(encodeURIComponent(content)));
-  await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/crd.yml`, {
+  const base64Content = btoa(unescape(encodeURIComponent(content)));
+  const url = `/repos/${owner}/${repoName}/contents/${path}`;
+  
+  let fileSha = null;
+  try {
+    // Thử lấy file để kiểm tra xem nó có tồn tại không và lấy SHA
+    const fileData = await githubApi(url, token);
+    fileSha = fileData.sha;
+    console.log("File workflow đã tồn tại, sẽ cập nhật.");
+  } catch (error) {
+    if (error.message.includes("404")) {
+      console.log("File workflow chưa tồn tại, sẽ tạo mới.");
+    } else {
+      throw error;
+    }
+  }
+
+  const body = {
+    message: `chore: Update CRD workflow file [skip ci]`,
+    content: base64Content,
+  };
+  // Nếu file đã tồn tại, thêm SHA để cập nhật
+  if (fileSha) {
+    body.sha = fileSha;
+  }
+
+  await githubApi(url, token, {
     method: "PUT",
-    headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
-    body: JSON.stringify({ message: "Add Chrome Remote Desktop workflow", content: base64 })
+    body: JSON.stringify(body)
   });
 }
 
 async function triggerWorkflow(token, owner) {
-  const repoName = 'app';
-  await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/crd.yml/dispatches`, {
+  const repoName = 'crd-runner-repo';
+  await githubApi(`/repos/${owner}/${repoName}/actions/workflows/crd.yml/dispatches`, token, {
     method: "POST",
-    headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
     body: JSON.stringify({ ref: "main" })
   });
 }
 
 async function checkWorkflowStatus(token, owner) {
-  const repoName = 'app';
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/crd.yml/runs`, {
-    headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" }
-  });
-  const data = await res.json();
-  const latest = data.workflow_runs[0];
-  return latest ? latest.status : "not_run";
+  const repoName = 'crd-runner-repo';
+  const data = await githubApi(`/repos/${owner}/${repoName}/actions/workflows/crd.yml/runs`, token);
+  
+  if (!data.workflow_runs || data.workflow_runs.length === 0) {
+    return { status: "not_run", conclusion: null };
+  }
+  
+  const latestRun = data.workflow_runs[0];
+  return {
+    status: latestRun.status,
+    conclusion: latestRun.conclusion,
+  };
 }
 
-document.getElementById("runBtn").addEventListener("click", async () => {
-  const token = document.getElementById("token").value;
-  const cmd = document.getElementById("crdCmd").value;
-  const pinInput = document.getElementById("pin").value;
-  const pin = pinInput.trim() || "111111";
-  const statusDiv = document.getElementById("status");
-  statusDiv.textContent = "Đang xử lý...";
+const runBtn = document.getElementById("runBtn");
+const statusDiv = document.getElementById("status");
+const tokenInput = document.getElementById("token");
+const crdCmdInput = document.getElementById("crdCmd");
+const pinInput = document.getElementById("pin");
+
+runBtn.addEventListener("click", async () => {
+  const token = tokenInput.value;
+  const cmd = crdCmdInput.value;
+  const pin = pinInput.value.trim() || "123456";
+
+  if (!token || !cmd) {
+    statusDiv.textContent = "❌ Vui lòng nhập GitHub Token và Dòng lệnh CRD.";
+    return;
+  }
+  
+  runBtn.disabled = true;
+  runBtn.textContent = "Đang xử lý...";
+  let pollingInterval;
+
   try {
+    statusDiv.textContent = "1/5: Đang xác thực và lấy thông tin user...";
     const owner = await createOrGetRepo(token);
-    await createWorkflowFile(token, owner, cmd, pin);
+
+    statusDiv.textContent = "2/5: Đang tạo/cập nhật file workflow...";
+    await createOrUpdateWorkflowFile(token, owner, cmd, pin);
+
+    statusDiv.textContent = "3/5: Đang kích hoạt workflow...";
     await triggerWorkflow(token, owner);
 
-    statusDiv.textContent = "Workflow đã được trigger. Kiểm tra trạng thái...";
-    const interval = setInterval(async () => {
-      const status = await checkWorkflowStatus(token, owner);
+    statusDiv.textContent = "4/5: Workflow đã được kích hoạt. Đang chờ runner khởi động...";
+    
+    pollingInterval = setInterval(async () => {
+      const { status, conclusion } = await checkWorkflowStatus(token, owner);
+      
       if (status === "completed") {
-        clearInterval(interval);
-        let countdown = 30;
-        statusDiv.classList.add("rainbow");
-        statusDiv.textContent = `Đang tạo VPS... ${countdown}s`;
-        const countdownInterval = setInterval(() => {
-          countdown--;
-          statusDiv.textContent = `Đang tạo VPS... ${countdown}s`;
-          if (countdown <= 0) {
-            clearInterval(countdownInterval);
-            statusDiv.classList.remove("rainbow");
-            statusDiv.innerHTML = `✅ Đã tạo VPS! <br><a href="https://remotedesktop.google.com/access" target="_blank" class="underline">Mở Chrome Remote Desktop</a>`;
-          }
-        }, 1000);
-      } else if (status === "failure") {
-        clearInterval(interval);
-        statusDiv.textContent = "Workflow thất bại.";
+        clearInterval(pollingInterval);
+        if (conclusion === "success") {
+          let countdown = 30;
+          statusDiv.classList.add("rainbow");
+          statusDiv.textContent = `5/5: Runner đã sẵn sàng! Đang chờ CRD khởi động (${countdown}s)...`;
+          const countdownInterval = setInterval(() => {
+            countdown--;
+            statusDiv.textContent = `5/5: Runner đã sẵn sàng! Đang chờ CRD khởi động (${countdown}s)...`;
+            if (countdown <= 0) {
+              clearInterval(countdownInterval);
+              statusDiv.classList.remove("rainbow");
+              statusDiv.innerHTML = `✅ VPS đã sẵn sàng! <br><a href="https://remotedesktop.google.com/access" target="_blank" class="underline hover:text-blue-300">Mở Chrome Remote Desktop để kết nối</a>`;
+              runBtn.disabled = false;
+              runBtn.textContent = "Chạy Workflow";
+            }
+          }, 1000);
+        } else {
+          statusDiv.textContent = `❌ Workflow thất bại với kết luận: ${conclusion}. Hãy kiểm tra tab Actions trong repo.`;
+          runBtn.disabled = false;
+          runBtn.textContent = "Chạy Workflow";
+        }
       } else {
-        statusDiv.textContent = `Workflow status: ${status}`;
+        statusDiv.textContent = `4/5: Trạng thái workflow: ${status}...`;
       }
-    }, 3000);
+    }, 5000); // Kiểm tra mỗi 5 giây
 
   } catch (e) {
+    clearInterval(pollingInterval);
     statusDiv.textContent = "Lỗi: " + e.message;
+    runBtn.disabled = false;
+    runBtn.textContent = "Chạy Workflow";
   }
 });
 </script>
