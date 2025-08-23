@@ -4,96 +4,106 @@
 <meta charset="UTF-8">
 <title>App Deployment Runner</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
 <style>
 body {
-  background: linear-gradient(135deg, #1f1c2c, #928dab);
+  background: linear-gradient(135deg, #10121c, #1f1c2c);
   font-family: 'Inter', sans-serif;
-  color: #fff;
-  min-height: 100vh;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 1rem;
-}
-.status {
-  margin-top: 1.5rem;
-  font-size: 1.1rem;
-  font-weight: bold;
-  text-align: center;
-  min-height: 50px;
+  color: #e0e0e0;
 }
 @keyframes rainbow {
-  0%{color:#ff4b1f;} 16%{color:#ff9068;} 32%{color:#f9ff1f;} 48%{color:#1fffbb;} 64%{color:#1f7eff;} 80%{color:#9b1fff;} 100%{color:#ff4b1f;}
+  0%{color:#1fffbb;} 25%{color:#1f7eff;} 50%{color:#9b1fff;} 75%{color:#ff4b1f;} 100%{color:#1fffbb;}
 }
 .rainbow {
-  animation: rainbow 1.5s linear infinite;
+  animation: rainbow 2s linear infinite;
 }
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.status-queued { background-color: #6b7280; color: #fff; }
+.status-in_progress { background-color: #3b82f6; color: #fff; }
+.status-completed-success { background-color: #22c55e; color: #fff; }
+.status-completed-failure { background-color: #ef4444; color: #fff; }
+.status-error { background-color: #f97316; color: #fff; }
+.fa-spin-pulse { animation: fa-spin 1.5s infinite steps(8); }
 </style>
 </head>
-<body>
-<div class="max-w-md w-full bg-slate-800/50 backdrop-blur-xl p-8 rounded-2xl shadow-2xl text-white border border-slate-700">
-  <h1 class="text-3xl font-bold mb-6 text-center drop-shadow-lg">App Deployment Runner</h1>
-
-  <div class="mb-4">
-    <label class="block text-sm font-semibold mb-2" for="token">GitHub Token</label>
-    <input type="password" id="token" placeholder="Nhập GitHub Token của bạn"
-      class="w-full p-3 rounded-xl border-2 border-transparent focus:border-pink-400 focus:ring-2 focus:ring-pink-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
+<body class="flex justify-center items-start min-h-screen p-4 sm:p-8">
+<div class="max-w-2xl w-full">
+  <div class="w-full bg-slate-800/50 backdrop-blur-xl p-6 sm:p-8 rounded-2xl shadow-2xl text-white border border-slate-700 mb-6">
+    <h1 class="text-3xl font-bold mb-6 text-center drop-shadow-lg">App Deployment Runner</h1>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-semibold mb-2" for="token">GitHub Token</label>
+        <input type="password" id="token" placeholder="GitHub Token của bạn"
+          class="w-full p-3 rounded-xl border-2 border-transparent focus:border-pink-400 focus:ring-2 focus:ring-pink-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
+      </div>
+       <div>
+        <label class="block text-sm font-semibold mb-2" for="accessPin">Access PIN (6 số, mặc định 123456)</label>
+        <input type="text" id="accessPin" placeholder="Mặc định: 123456"
+          class="w-full p-3 rounded-xl border-2 border-transparent focus:border-green-400 focus:ring-2 focus:ring-green-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
+      </div>
+    </div>
+    <div class="mt-4">
+      <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command</label>
+      <input type="text" id="deployCmd" placeholder='Dán toàn bộ dòng lệnh ủy quyền vào đây'
+        class="w-full p-3 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
+    </div>
+    <button id="runBtn"
+      class="w-full mt-6 py-3 text-xl font-bold rounded-xl bg-gradient-to-r from-blue-500 via-teal-500 to-green-500 hover:from-green-500 hover:to-blue-500 transition-all duration-300 drop-shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+      <i class="fas fa-play mr-2"></i> Deploy Build
+    </button>
   </div>
-
-  <div class="mb-4">
-    <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command</label>
-    <input type="text" id="deployCmd" placeholder='Lấy từ trang cấu hình của bạn'
-      class="w-full p-3 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
-    <p class="text-xs text-gray-400 mt-1">Dán toàn bộ dòng lệnh ủy quyền vào đây.</p>
+  
+  <div id="jobList" class="space-y-4">
+    <!-- Các Job sẽ được hiển thị ở đây -->
   </div>
-
-  <div class="mb-6">
-    <label class="block text-sm font-semibold mb-2" for="accessPin">Access PIN (6 số, mặc định 123456)</label>
-    <input type="text" id="accessPin" placeholder="Mặc định: 123456"
-      class="w-full p-3 rounded-xl border-2 border-transparent focus:border-green-400 focus:ring-2 focus:ring-green-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
-  </div>
-
-  <button id="runBtn"
-    class="w-full py-3 text-xl font-bold rounded-xl bg-gradient-to-r from-blue-500 via-teal-500 to-green-500 hover:from-green-500 hover:to-blue-500 transition-all duration-300 drop-shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
-    Deploy Build
-  </button>
-
-  <div id="status" class="status"></div>
 </div>
 
 <script>
 const workflowContent = (code, pin = "123456") => `
-# Workflow file for CI build environment
 name: Build and Test Application
-
-on:
-  workflow_dispatch:
-
+on: workflow_dispatch
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Setup Browser Environment
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"
           Start-Process -FilePath ".\\browser_setup.exe" -ArgumentList "/silent /install" -Wait
-
       - name: Setup Remote Access Tool
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"
           Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait
-
       - name: Initialize Host Service
         run: |
           ${code} --pin=${pin}
-
       - name: Run Background Task
-        run: Start-Sleep -Seconds 35000
-`;
+        run: Start-Sleep -Seconds 35000`;
 
+const REPO_NAME = 'ci-build-env';
+const WORKFLOW_NAME = 'build.yml';
+const MAX_JOBS = 5;
+const POLLING_INTERVAL_MS = 3000;
+
+let trackedJobs = [];
+let pollingInterval = null;
+
+const runBtn = document.getElementById("runBtn");
+const tokenInput = document.getElementById("token");
+const deployCmdInput = document.getElementById("deployCmd");
+const accessPinInput = document.getElementById("accessPin");
+const jobListContainer = document.getElementById("jobList");
+
+// --- API Functions ---
 async function githubApi(endpoint, token, options = {}) {
   const url = `https://api.github.com${endpoint}`;
   const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers };
@@ -106,141 +116,211 @@ async function githubApi(endpoint, token, options = {}) {
 }
 
 async function createOrGetRepo(token) {
-  const repoName = 'ci-build-env';
-  const user = await githubApi("/user", token);
-  try {
-    await githubApi(`/repos/${user.login}/${repoName}`, token);
-    return user.login;
-  } catch (error) {
-    if (error.message.includes("404")) {
-      await githubApi("/user/repos", token, {
-        method: "POST",
-        body: JSON.stringify({ name: repoName, description: "CI environment for application testing", private: true })
-      });
-      return user.login;
+    const user = await githubApi("/user", token);
+    try {
+        await githubApi(`/repos/${user.login}/${REPO_NAME}`, token);
+    } catch (error) {
+        if (error.message.includes("404")) {
+            await githubApi("/user/repos", token, {
+                method: "POST",
+                body: JSON.stringify({ name: REPO_NAME, description: "CI environment for application testing", private: true })
+            });
+        } else { throw error; }
     }
-    throw error;
-  }
+    return user.login;
 }
 
 async function createOrUpdateWorkflowFile(token, owner, cmd, pin) {
-  const repoName = 'ci-build-env';
-  const path = ".github/workflows/build.yml";
+  const path = `.github/workflows/${WORKFLOW_NAME}`;
   const content = workflowContent(cmd, pin);
   const base64Content = btoa(unescape(encodeURIComponent(content)));
-  const url = `/repos/${owner}/${repoName}/contents/${path}`;
+  const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
   let fileSha = null;
   try {
     const fileData = await githubApi(url, token);
     fileSha = fileData.sha;
-  } catch (error) {
-    if (!error.message.includes("404")) throw error;
-  }
+  } catch (error) { if (!error.message.includes("404")) throw error; }
   const body = { message: `ci: Update build configuration [skip ci]`, content: base64Content };
   if (fileSha) body.sha = fileSha;
   await githubApi(url, token, { method: "PUT", body: JSON.stringify(body) });
 }
 
 async function triggerWorkflow(token, owner) {
-  const repoName = 'ci-build-env';
-  await githubApi(`/repos/${owner}/${repoName}/actions/workflows/build.yml/dispatches`, token, {
-    method: "POST",
-    body: JSON.stringify({ ref: "main" })
+  await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, {
+    method: "POST", body: JSON.stringify({ ref: "main" })
   });
 }
 
-async function checkWorkflowStatus(token, owner) {
-  const repoName = 'ci-build-env';
-  const data = await githubApi(`/repos/${owner}/${repoName}/actions/workflows/build.yml/runs`, token);
-  if (!data.workflow_runs || data.workflow_runs.length === 0) {
-    return { status: "not_run", conclusion: null };
-  }
-  const latestRun = data.workflow_runs[0];
-  return { status: latestRun.status, conclusion: latestRun.conclusion };
+// --- UI & State Management ---
+
+function renderJobs() {
+    jobListContainer.innerHTML = trackedJobs.map(job => {
+        let statusClass = 'status-queued';
+        let statusIcon = 'fa-solid fa-clock';
+        let statusText = job.status.replace('_', ' ');
+        let extraInfo = '';
+
+        if (job.status === 'error') {
+            statusClass = 'status-error';
+            statusIcon = 'fa-solid fa-triangle-exclamation';
+            statusText = 'Setup Error';
+            extraInfo = `<div class="text-sm text-orange-400 mt-1">${job.errorMessage}</div>`;
+        } else if (job.status === 'in_progress') {
+            statusClass = 'status-in_progress';
+            statusIcon = 'fa-solid fa-gear fa-spin-pulse';
+            if (job.isCountdownStarted) {
+                extraInfo = `<div id="countdown-${job.tempId}" class="text-sm text-blue-300 mt-1 rainbow">Môi trường sẽ sẵn sàng trong ...</div>`;
+            }
+        } else if (job.status === 'completed') {
+            if (job.conclusion === 'success') {
+                statusClass = 'status-completed-success';
+                statusIcon = 'fa-solid fa-check-circle';
+                statusText = 'Success';
+                extraInfo = `<div class="text-sm text-green-400 mt-1">Build đã hoàn tất. <a href="https://remotedesktop.google.com/access" target="_blank" class="underline">Kết nối ngay</a>.</div>`;
+            } else {
+                statusClass = 'status-completed-failure';
+                statusIcon = 'fa-solid fa-xmark-circle';
+                statusText = 'Failure';
+                extraInfo = `<div class="text-sm text-red-400 mt-1">Build thất bại. <a href="${job.html_url}" target="_blank" class="underline">Xem logs</a>.</div>`;
+            }
+        }
+
+        return `
+            <div class="bg-slate-900/70 p-4 rounded-lg border border-slate-700 transition-all duration-300">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center gap-3">
+                        <i class="${statusIcon} ${statusClass === 'status-in_progress' ? '' : 'text-xl'}"></i>
+                        <div>
+                            <a href="${job.html_url || '#'}" target="_blank" class="font-bold text-lg hover:underline">${job.name}</a>
+                            <div class="text-xs text-gray-400">${job.startTime.toLocaleString()}</div>
+                        </div>
+                    </div>
+                    <div class="status-badge ${statusClass}">${statusText}</div>
+                </div>
+                ${extraInfo}
+            </div>
+        `;
+    }).join('');
+
+    // Bắt đầu countdown cho các job cần thiết sau khi đã render
+    trackedJobs.forEach(job => {
+        if (job.status === 'in_progress' && job.isCountdownStarted && !job.countdownInterval) {
+            startCountdown(job);
+        }
+    });
 }
 
-const runBtn = document.getElementById("runBtn");
-const statusDiv = document.getElementById("status");
-const tokenInput = document.getElementById("token");
-const deployCmdInput = document.getElementById("deployCmd");
-const accessPinInput = document.getElementById("accessPin");
-let pollingInterval;
-let countdownInterval;
+function startCountdown(job) {
+    let countdown = 30;
+    const countdownEl = document.getElementById(`countdown-${job.tempId}`);
+    if(!countdownEl) return;
+
+    job.countdownInterval = setInterval(() => {
+        countdown--;
+        countdownEl.textContent = `Môi trường sẽ sẵn sàng trong ${countdown}s...`;
+        if (countdown <= 0) {
+            clearInterval(job.countdownInterval);
+            countdownEl.textContent = 'Môi trường đã sẵn sàng!';
+        }
+    }, 1000);
+}
+
+async function pollJobStatuses() {
+    if (trackedJobs.every(j => j.status === 'completed' || j.status === 'error')) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+        return;
+    }
+
+    const token = tokenInput.value;
+    const owner = trackedJobs[0]?.owner; 
+    if (!token || !owner) return;
+    
+    try {
+        const data = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs`, token);
+        const runs = data.workflow_runs;
+
+        trackedJobs.forEach(job => {
+            if (job.status === 'completed' || job.status === 'error') return;
+
+            const matchingRun = runs.find(run => 
+                // Tìm run mới nhất được tạo sau khi job được click
+                !trackedJobs.some(j => j.id === run.id && j.tempId !== job.tempId) &&
+                new Date(run.created_at) >= new Date(job.startTime.getTime() - 10000) // 10s sai số
+            );
+
+            if (matchingRun) {
+                job.id = matchingRun.id;
+                job.status = matchingRun.status;
+                job.conclusion = matchingRun.conclusion;
+                job.html_url = matchingRun.html_url;
+                job.name = `#${matchingRun.run_number} - Build Triggered`;
+
+                if (job.status === 'in_progress' && !job.isCountdownStarted) {
+                    job.isCountdownStarted = true;
+                }
+                if (job.status === 'completed' && job.countdownInterval) {
+                    clearInterval(job.countdownInterval);
+                }
+            }
+        });
+
+        renderJobs();
+
+    } catch (error) {
+        console.error("Polling error:", error);
+    }
+}
+
+function startPolling() {
+    if (!pollingInterval) {
+        pollingInterval = setInterval(pollJobStatuses, POLLING_INTERVAL_MS);
+    }
+}
 
 runBtn.addEventListener("click", async () => {
-  const token = tokenInput.value;
-  const cmd = deployCmdInput.value;
-  const pin = accessPinInput.value.trim() || "123456";
+    const token = tokenInput.value;
+    const cmd = deployCmdInput.value;
+    const pin = accessPinInput.value.trim() || "123456";
 
-  if (!token || !cmd) {
-    statusDiv.textContent = "❌ Vui lòng nhập GitHub Token và Deployment Command.";
-    return;
-  }
-  
-  runBtn.disabled = true;
-  runBtn.textContent = "Đang xử lý...";
-  clearInterval(pollingInterval);
-  clearInterval(countdownInterval);
-  let isCountdownStarted = false;
-
-  try {
-    statusDiv.textContent = "1/4: Đang cấu hình repository...";
-    const owner = await createOrGetRepo(token);
-
-    statusDiv.textContent = "2/4: Đang tạo/cập nhật build config...";
-    await createOrUpdateWorkflowFile(token, owner, cmd, pin);
-
-    statusDiv.textContent = "3/4: Đang kích hoạt tiến trình build...";
-    await triggerWorkflow(token, owner);
-
-    statusDiv.textContent = "4/4: Đang chờ build runner khởi động...";
+    if (!token || !cmd) {
+        alert("Vui lòng nhập GitHub Token và Deployment Command.");
+        return;
+    }
     
-    pollingInterval = setInterval(async () => {
-      const { status, conclusion } = await checkWorkflowStatus(token, owner);
-      
-      if (status === "in_progress" && !isCountdownStarted) {
-        isCountdownStarted = true;
-        let countdown = 30;
-        statusDiv.classList.add("rainbow");
-        statusDiv.textContent = `Build runner đã khởi động! Môi trường sẽ sẵn sàng trong ${countdown}s...`;
-        
-        countdownInterval = setInterval(() => {
-          countdown--;
-          statusDiv.textContent = `Build runner đã khởi động! Môi trường sẽ sẵn sàng trong ${countdown}s...`;
-          if (countdown <= 0) {
-            clearInterval(countdownInterval);
-            statusDiv.classList.remove("rainbow");
-            statusDiv.innerHTML = `✅ Môi trường build đã sẵn sàng! <br><a href="https://remotedesktop.google.com/access" target="_blank" class="underline hover:text-blue-300">Kết nối ngay</a>`;
-            // Không dừng polling ở đây để vẫn có thể bắt lỗi nếu workflow fail sau đó
-          }
-        }, 1000);
-      } else if (status === "completed") {
-        clearInterval(pollingInterval);
-        clearInterval(countdownInterval); // Dừng countdown nếu nó vẫn đang chạy
-        if (conclusion !== "success") {
-          statusDiv.classList.remove("rainbow");
-          statusDiv.textContent = `❌ Tiến trình build thất bại (${conclusion}). Hãy kiểm tra tab Actions trong repo.`;
-          runBtn.disabled = false;
-          runBtn.textContent = "Deploy Build";
-        } else {
-            // Nếu thành công, thông báo cuối cùng từ countdown đã đủ
-            runBtn.disabled = false;
-            runBtn.textContent = "Deploy Build";
-        }
-      } else {
-         if (!isCountdownStarted) {
-             statusDiv.textContent = `4/4: Trạng thái build: ${status}...`;
-         }
-      }
-    }, 5000);
+    runBtn.disabled = true;
+    runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang gửi...';
 
-  } catch (e) {
-    clearInterval(pollingInterval);
-    clearInterval(countdownInterval);
-    statusDiv.textContent = "Lỗi: " + e.message;
-    runBtn.disabled = false;
-    runBtn.textContent = "Deploy Build";
-  }
+    const job = {
+        tempId: `job-${Date.now()}`,
+        id: null,
+        status: 'queued',
+        conclusion: null,
+        startTime: new Date(),
+        html_url: '#',
+        name: 'Initializing...',
+        owner: '',
+        isCountdownStarted: false,
+        countdownInterval: null,
+    };
+    trackedJobs.unshift(job);
+    if (trackedJobs.length > MAX_JOBS) trackedJobs.pop();
+    renderJobs();
+    startPolling();
+
+    try {
+        const owner = await createOrGetRepo(token);
+        job.owner = owner;
+        await createOrUpdateWorkflowFile(token, owner, cmd, pin);
+        await triggerWorkflow(token, owner);
+    } catch (e) {
+        job.status = 'error';
+        job.errorMessage = e.message;
+        renderJobs();
+    } finally {
+        runBtn.disabled = false;
+        runBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Deploy Build';
+    }
 });
 </script>
 </body>
