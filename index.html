@@ -14,32 +14,63 @@ body {
 @keyframes rainbow {
   0%{color:#1fffbb;} 25%{color:#1f7eff;} 50%{color:#9b1fff;} 75%{color:#ff4b1f;} 100%{color:#1fffbb;}
 }
-.rainbow {
-  animation: rainbow 2s linear infinite;
-}
-.status-badge {
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
+.rainbow { animation: rainbow 2s linear infinite; }
+.status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .status-queued { background-color: #6b7280; color: #fff; }
 .status-in_progress { background-color: #3b82f6; color: #fff; }
 .status-completed-success { background-color: #22c55e; color: #fff; }
 .status-completed-failure { background-color: #ef4444; color: #fff; }
 .status-error { background-color: #f97316; color: #fff; }
 .fa-spin-pulse { animation: fa-spin 1.5s infinite steps(8); }
+.info-tooltip {
+    display: none;
+    position: absolute;
+    bottom: 125%; /* Position above the icon */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 300px;
+    background-color: #1f2937;
+    color: #e5e7eb;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid #4b5563;
+    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5);
+    z-index: 10;
+}
+.info-tooltip::after { /* Arrow */
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #1f2937 transparent transparent transparent;
+}
+.info-tooltip.show { display: block; }
 </style>
 </head>
 <body class="flex justify-center items-start min-h-screen p-4 sm:p-8">
 <div class="max-w-2xl w-full">
   <div class="w-full bg-slate-800/50 backdrop-blur-xl p-6 sm:p-8 rounded-2xl shadow-2xl text-white border border-slate-700 mb-6">
     <h1 class="text-3xl font-bold mb-6 text-center drop-shadow-lg">App Deployment Runner</h1>
+    
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div>
-        <label class="block text-sm font-semibold mb-2" for="token">GitHub Token</label>
+      <div class="relative">
+        <label class="block text-sm font-semibold mb-2" for="token">
+            GitHub Token
+            <span class="info-icon text-gray-400 cursor-pointer ml-1"><i class="fas fa-question-circle"></i></span>
+        </label>
+        <div id="token-tooltip" class="info-tooltip">
+            <p class="font-bold mb-2">Cách lấy GitHub Token:</p>
+            <ol class="list-decimal list-inside text-sm space-y-1">
+                <li>Vào <a href="https://github.com/settings/tokens/new" target="_blank" class="text-blue-400 underline">đây</a> để tạo token mới.</li>
+                <li>Đặt tên bất kỳ, chọn "No expiration".</li>
+                <li>Trong "Repository access", chọn "All repositories".</li>
+                <li>Trong "Permissions", tìm đến <strong>Actions</strong> và <strong>Workflows</strong>, chọn "Read and write".</li>
+                <li>Nhấn "Generate token" và sao chép.</li>
+            </ol>
+        </div>
         <input type="password" id="token" placeholder="GitHub Token của bạn"
           class="w-full p-3 rounded-xl border-2 border-transparent focus:border-pink-400 focus:ring-2 focus:ring-pink-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
       </div>
@@ -49,10 +80,23 @@ body {
           class="w-full p-3 rounded-xl border-2 border-transparent focus:border-green-400 focus:ring-2 focus:ring-green-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
       </div>
     </div>
-    <div class="mt-4">
-      <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command</label>
-      <input type="text" id="deployCmd" placeholder='Dán toàn bộ dòng lệnh ủy quyền vào đây'
-        class="w-full p-3 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
+
+    <div class="mt-4 relative">
+        <label class="block text-sm font-semibold mb-2" for="deployCmd">
+            Deployment Command
+            <span class="info-icon text-gray-400 cursor-pointer ml-1"><i class="fas fa-question-circle"></i></span>
+        </label>
+        <div id="cmd-tooltip" class="info-tooltip">
+            <p class="font-bold mb-2">Cách lấy Deployment Command:</p>
+            <ol class="list-decimal list-inside text-sm space-y-1">
+                <li>Vào <a href="https://remotedesktop.google.com/headless" target="_blank" class="text-blue-400 underline">trang thiết lập không cần màn hình</a> của Google.</li>
+                <li>Nhấn "Bắt đầu", "Tiếp theo", "Ủy quyền".</li>
+                <li>Sao chép toàn bộ dòng lệnh cho <strong>Windows (CMD)</strong>.</li>
+            </ol>
+            <p class="mt-3 text-sm text-yellow-400"><i class="fas fa-exclamation-triangle mr-1"></i><strong>Quan trọng:</strong> Mỗi dòng lệnh chỉ có thể sử dụng cho <strong>một lần deploy duy nhất</strong>. Bạn phải lấy lệnh mới cho mỗi lần chạy.</p>
+        </div>
+        <input type="text" id="deployCmd" placeholder='Dán toàn bộ dòng lệnh ủy quyền vào đây'
+            class="w-full p-3 rounded-xl border-2 border-transparent focus:border-blue-400 focus:ring-2 focus:ring-blue-300 focus:outline-none text-lg bg-black/50 placeholder-gray-400 text-white transition-all duration-300"/>
     </div>
     <button id="runBtn"
       class="w-full mt-6 py-3 text-xl font-bold rounded-xl bg-gradient-to-r from-blue-500 via-teal-500 to-green-500 hover:from-green-500 hover:to-blue-500 transition-all duration-300 drop-shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
@@ -60,6 +104,12 @@ body {
     </button>
   </div>
   
+  <div class="flex justify-between items-center mb-4 px-2">
+      <h2 class="text-xl font-bold text-gray-300">Build History</h2>
+      <button id="refreshBtn" class="text-gray-400 hover:text-white transition-colors duration-200" title="Refresh Status">
+          <i class="fas fa-sync-alt"></i>
+      </button>
+  </div>
   <div id="jobList" class="space-y-4">
     <!-- Các Job sẽ được hiển thị ở đây -->
   </div>
@@ -73,8 +123,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Setup Browser Environment
         run: |
           Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"
@@ -95,6 +144,7 @@ const MAX_JOBS = 5;
 const POLLING_INTERVAL_MS = 3000;
 
 let trackedJobs = [];
+let usedCommands = [];
 let pollingInterval = null;
 
 const runBtn = document.getElementById("runBtn");
@@ -102,8 +152,8 @@ const tokenInput = document.getElementById("token");
 const deployCmdInput = document.getElementById("deployCmd");
 const accessPinInput = document.getElementById("accessPin");
 const jobListContainer = document.getElementById("jobList");
+const refreshBtn = document.getElementById("refreshBtn");
 
-// --- API Functions ---
 async function githubApi(endpoint, token, options = {}) {
   const url = `https://api.github.com${endpoint}`;
   const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers };
@@ -122,8 +172,7 @@ async function createOrGetRepo(token) {
     } catch (error) {
         if (error.message.includes("404")) {
             await githubApi("/user/repos", token, {
-                method: "POST",
-                body: JSON.stringify({ name: REPO_NAME, description: "CI environment for application testing", private: true })
+                method: "POST", body: JSON.stringify({ name: REPO_NAME, description: "CI environment for application testing", private: true })
             });
         } else { throw error; }
     }
@@ -151,8 +200,6 @@ async function triggerWorkflow(token, owner) {
   });
 }
 
-// --- UI & State Management ---
-
 function renderJobs() {
     jobListContainer.innerHTML = trackedJobs.map(job => {
         let statusClass = 'status-queued';
@@ -161,52 +208,38 @@ function renderJobs() {
         let extraInfo = '';
 
         if (job.status === 'error') {
-            statusClass = 'status-error';
-            statusIcon = 'fa-solid fa-triangle-exclamation';
-            statusText = 'Setup Error';
+            statusClass = 'status-error'; statusIcon = 'fa-solid fa-triangle-exclamation'; statusText = 'Setup Error';
             extraInfo = `<div class="text-sm text-orange-400 mt-1">${job.errorMessage}</div>`;
         } else if (job.status === 'in_progress') {
-            statusClass = 'status-in_progress';
-            statusIcon = 'fa-solid fa-gear fa-spin-pulse';
-            if (job.isCountdownStarted) {
-                extraInfo = `<div id="countdown-${job.tempId}" class="text-sm text-blue-300 mt-1 rainbow">Môi trường sẽ sẵn sàng trong ...</div>`;
-            }
+            statusClass = 'status-in_progress'; statusIcon = 'fa-solid fa-gear fa-spin-pulse';
+            if (job.isCountdownStarted) extraInfo = `<div id="countdown-${job.tempId}" class="text-sm text-blue-300 mt-1 rainbow">Đang khởi tạo host...</div>`;
         } else if (job.status === 'completed') {
             if (job.conclusion === 'success') {
-                statusClass = 'status-completed-success';
-                statusIcon = 'fa-solid fa-check-circle';
-                statusText = 'Success';
+                statusClass = 'status-completed-success'; statusIcon = 'fa-solid fa-check-circle'; statusText = 'Success';
                 extraInfo = `<div class="text-sm text-green-400 mt-1">Build đã hoàn tất. <a href="https://remotedesktop.google.com/access" target="_blank" class="underline">Kết nối ngay</a>.</div>`;
             } else {
-                statusClass = 'status-completed-failure';
-                statusIcon = 'fa-solid fa-xmark-circle';
-                statusText = 'Failure';
+                statusClass = 'status-completed-failure'; statusIcon = 'fa-solid fa-xmark-circle'; statusText = 'Failure';
                 extraInfo = `<div class="text-sm text-red-400 mt-1">Build thất bại. <a href="${job.html_url}" target="_blank" class="underline">Xem logs</a>.</div>`;
             }
         }
 
-        return `
-            <div class="bg-slate-900/70 p-4 rounded-lg border border-slate-700 transition-all duration-300">
-                <div class="flex justify-between items-center">
-                    <div class="flex items-center gap-3">
-                        <i class="${statusIcon} ${statusClass === 'status-in_progress' ? '' : 'text-xl'}"></i>
-                        <div>
-                            <a href="${job.html_url || '#'}" target="_blank" class="font-bold text-lg hover:underline">${job.name}</a>
-                            <div class="text-xs text-gray-400">${job.startTime.toLocaleString()}</div>
+        return `<div class="bg-slate-900/70 p-4 rounded-lg border border-slate-700 transition-all duration-300">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-3">
+                            <i class="${statusIcon} ${statusClass === 'status-in_progress' ? '' : 'text-xl'}"></i>
+                            <div>
+                                <a href="${job.html_url || '#'}" target="_blank" class="font-bold text-lg hover:underline">${job.name}</a>
+                                <div class="text-xs text-gray-400">${job.startTime.toLocaleString()}</div>
+                            </div>
                         </div>
+                        <div class="status-badge ${statusClass}">${statusText}</div>
                     </div>
-                    <div class="status-badge ${statusClass}">${statusText}</div>
-                </div>
-                ${extraInfo}
-            </div>
-        `;
+                    ${extraInfo}
+                </div>`;
     }).join('');
 
-    // Bắt đầu countdown cho các job cần thiết sau khi đã render
     trackedJobs.forEach(job => {
-        if (job.status === 'in_progress' && job.isCountdownStarted && !job.countdownInterval) {
-            startCountdown(job);
-        }
+        if (job.status === 'in_progress' && job.isCountdownStarted && !job.countdownInterval) startCountdown(job);
     });
 }
 
@@ -214,26 +247,26 @@ function startCountdown(job) {
     let countdown = 30;
     const countdownEl = document.getElementById(`countdown-${job.tempId}`);
     if(!countdownEl) return;
-
+    countdownEl.textContent = `Đang khởi tạo host... (${countdown}s)`;
     job.countdownInterval = setInterval(() => {
         countdown--;
-        countdownEl.textContent = `Môi trường sẽ sẵn sàng trong ${countdown}s...`;
+        countdownEl.textContent = `Đang khởi tạo host... (${countdown}s)`;
         if (countdown <= 0) {
             clearInterval(job.countdownInterval);
-            countdownEl.textContent = 'Môi trường đã sẵn sàng!';
+            countdownEl.textContent = 'Host đã sẵn sàng!';
         }
     }, 1000);
 }
 
 async function pollJobStatuses() {
-    if (trackedJobs.every(j => j.status === 'completed' || j.status === 'error')) {
+    if (trackedJobs.length === 0 || trackedJobs.every(j => j.status === 'completed' || j.status === 'error')) {
         clearInterval(pollingInterval);
         pollingInterval = null;
         return;
     }
 
     const token = tokenInput.value;
-    const owner = trackedJobs[0]?.owner; 
+    const owner = trackedJobs.find(j => j.owner)?.owner;
     if (!token || !owner) return;
     
     try {
@@ -242,34 +275,20 @@ async function pollJobStatuses() {
 
         trackedJobs.forEach(job => {
             if (job.status === 'completed' || job.status === 'error') return;
-
-            const matchingRun = runs.find(run => 
-                // Tìm run mới nhất được tạo sau khi job được click
-                !trackedJobs.some(j => j.id === run.id && j.tempId !== job.tempId) &&
-                new Date(run.created_at) >= new Date(job.startTime.getTime() - 10000) // 10s sai số
-            );
-
+            const matchingRun = runs.find(run => new Date(run.created_at) >= new Date(job.startTime.getTime() - 15000) && !trackedJobs.some(j => j.id === run.id && j.tempId !== job.tempId));
+            
             if (matchingRun) {
                 job.id = matchingRun.id;
                 job.status = matchingRun.status;
                 job.conclusion = matchingRun.conclusion;
                 job.html_url = matchingRun.html_url;
                 job.name = `#${matchingRun.run_number} - Build Triggered`;
-
-                if (job.status === 'in_progress' && !job.isCountdownStarted) {
-                    job.isCountdownStarted = true;
-                }
-                if (job.status === 'completed' && job.countdownInterval) {
-                    clearInterval(job.countdownInterval);
-                }
+                if (job.status === 'in_progress' && !job.isCountdownStarted) job.isCountdownStarted = true;
+                if (job.status === 'completed' && job.countdownInterval) clearInterval(job.countdownInterval);
             }
         });
-
         renderJobs();
-
-    } catch (error) {
-        console.error("Polling error:", error);
-    }
+    } catch (error) { console.error("Polling error:", error); }
 }
 
 function startPolling() {
@@ -284,24 +303,18 @@ runBtn.addEventListener("click", async () => {
     const pin = accessPinInput.value.trim() || "123456";
 
     if (!token || !cmd) {
-        alert("Vui lòng nhập GitHub Token và Deployment Command.");
-        return;
+        alert("Vui lòng nhập GitHub Token và Deployment Command."); return;
+    }
+    if (usedCommands.includes(cmd)) {
+        alert("Lỗi: Dòng lệnh này đã được sử dụng. Vui lòng lấy một dòng lệnh mới cho mỗi lần deploy."); return;
     }
     
     runBtn.disabled = true;
     runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang gửi...';
 
     const job = {
-        tempId: `job-${Date.now()}`,
-        id: null,
-        status: 'queued',
-        conclusion: null,
-        startTime: new Date(),
-        html_url: '#',
-        name: 'Initializing...',
-        owner: '',
-        isCountdownStarted: false,
-        countdownInterval: null,
+        tempId: `job-${Date.now()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(),
+        html_url: '#', name: 'Initializing...', owner: '', isCountdownStarted: false, countdownInterval: null,
     };
     trackedJobs.unshift(job);
     if (trackedJobs.length > MAX_JOBS) trackedJobs.pop();
@@ -313,6 +326,8 @@ runBtn.addEventListener("click", async () => {
         job.owner = owner;
         await createOrUpdateWorkflowFile(token, owner, cmd, pin);
         await triggerWorkflow(token, owner);
+        usedCommands.push(cmd);
+        deployCmdInput.value = '';
     } catch (e) {
         job.status = 'error';
         job.errorMessage = e.message;
@@ -321,6 +336,28 @@ runBtn.addEventListener("click", async () => {
         runBtn.disabled = false;
         runBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Deploy Build';
     }
+});
+
+refreshBtn.addEventListener('click', async () => {
+    const icon = refreshBtn.querySelector('i');
+    icon.classList.add('fa-spin');
+    await pollJobStatuses();
+    setTimeout(() => icon.classList.remove('fa-spin'), 500);
+});
+
+// Tooltip Logic
+document.querySelectorAll('.info-icon').forEach(icon => {
+    icon.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const tooltipId = icon.parentElement.htmlFor ? `${icon.parentElement.htmlFor}-tooltip` : 'cmd-tooltip';
+        const tooltip = document.getElementById(tooltipId);
+        const isVisible = tooltip.classList.contains('show');
+        document.querySelectorAll('.info-tooltip').forEach(t => t.classList.remove('show'));
+        if (!isVisible) tooltip.classList.add('show');
+    });
+});
+document.addEventListener('click', () => {
+    document.querySelectorAll('.info-tooltip').forEach(t => t.classList.remove('show'));
 });
 </script>
 </body>
