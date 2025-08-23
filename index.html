@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GitHub Workflow Runner</title>
+<style>
+body { font-family: Arial; margin: 20px; }
+#result { margin-top: 20px; }
+pre { background: #f0f0f0; padding: 10px; max-height: 300px; overflow-y: scroll; }
+</style>
+</head>
+<body>
+<h2>GitHub Repo & Workflow Runner</h2>
+<form id="form">
+  GitHub Token: <input type="password" id="token" required /><br/>
+  Repo Name: <input type="text" id="repo" required /><br/>
+  <button type="submit">Tạo & Chạy</button>
+</form>
+
+<div id="result"></div>
+<pre id="log"></pre>
+
+<script>
+async function createRepo(token, repoName) {
+  const res = await fetch("https://api.github.com/user/repos", {
+    method: "POST",
+    headers: {
+      "Authorization": `token ${token}`,
+      "Accept": "application/vnd.github+json"
+    },
+    body: JSON.stringify({ name: repoName })
+  });
+  return res.json();
+}
+
+async function createWorkflow(token, owner, repoName) {
+  const workflowContent = `
+name: Demo Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Say Hello
+        run: echo "Hello from GitHub Actions!"
+`;
+
+  const base64 = btoa(unescape(encodeURIComponent(workflowContent)));
+
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/demo.yml`, {
+    method: "PUT",
+    headers: {
+      "Authorization": `token ${token}`,
+      "Accept": "application/vnd.github+json"
+    },
+    body: JSON.stringify({
+      message: "Add demo workflow",
+      content: base64
+    })
+  });
+  return res.json();
+}
+
+async function triggerWorkflow(token, owner, repoName) {
+  await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/demo.yml/dispatches`, {
+    method: "POST",
+    headers: {
+      "Authorization": `token ${token}`,
+      "Accept": "application/vnd.github+json"
+    },
+    body: JSON.stringify({ ref: "main" })
+  });
+}
+
+async function getLatestRun(token, owner, repoName) {
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/demo.yml/runs`, {
+    headers: {
+      "Authorization": `token ${token}`,
+      "Accept": "application/vnd.github+json"
+    }
+  });
+  const data = await res.json();
+  return data.workflow_runs[0];
+}
+
+async function getJobLogs(token, owner, repoName, runId) {
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/runs/${runId}/logs`, {
+    headers: {
+      "Authorization": `token ${token}`,
+      "Accept": "application/vnd.github+json"
+    }
+  });
+  return res.blob(); // logs ở dạng zip
+}
+
+document.getElementById("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const token = document.getElementById("token").value;
+  const repo = document.getElementById("repo").value;
+  const resultDiv = document.getElementById("result");
+  const logPre = document.getElementById("log");
+  resultDiv.innerHTML = "Đang tạo repo...";
+
+  try {
+    const repoData = await createRepo(token, repo);
+    const owner = repoData.owner.login;
+    resultDiv.innerHTML = `Repo ${repo} tạo thành công.<br>Đang tạo workflow...`;
+
+    await createWorkflow(token, owner, repo);
+    resultDiv.innerHTML += `<br>Workflow tạo xong.<br>Đang trigger workflow...`;
+
+    await triggerWorkflow(token, owner, repo);
+
+    // Poll trạng thái workflow
+    let status = "";
+    let conclusion = "";
+    let runId = null;
+    resultDiv.innerHTML += `<br>Đang chạy workflow...`;
+    while (true) {
+      await new Promise(r => setTimeout(r, 3000));
+      const latest = await getLatestRun(token, owner, repo);
+      if (!latest) continue;
+      status = latest.status;
+      conclusion = latest.conclusion;
+      runId = latest.id;
+      resultDiv.innerHTML = `Workflow URL: <a href="${latest.html_url}" target="_blank">${latest.html_url}</a><br>Status: ${status}, Conclusion: ${conclusion}`;
+      if (status === "completed") break;
+    }
+
+    logPre.textContent = `Workflow kết thúc với conclusion: ${conclusion}\nLogs sẽ ở dạng zip, có thể tải về từ GitHub.`;
+
+  } catch (err) {
+    resultDiv.innerHTML = `Error: ${err.message}`;
+  }
+});
+</script>
+</body>
+</html>
