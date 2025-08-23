@@ -2,186 +2,205 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>GitHub Workflow Runner</title>
+<title>Chrome Remote Desktop Runner</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
-body { background-color: #121212; color: #e0e0e0; font-family: "Inter", sans-serif; }
-input, select { background-color: #1e1e1e; color: #e0e0e0; border: 1px solid #333; padding: 0.5rem; border-radius: 0.375rem; }
-input:focus, select:focus { outline: 2px solid #4f46e5; }
-button { background-color: #4f46e5; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; transition: 0.2s; }
-button:hover { background-color: #4338ca; }
-pre { background-color: #1e1e1e; padding: 1rem; border-radius: 0.5rem; max-height: 400px; overflow-y: scroll; white-space: pre-wrap; }
-.status { padding: 0.5rem 1rem; border-radius: 0.375rem; display: inline-block; margin-top: 0.5rem; }
-.status.pending { background-color: #facc15; color: #121212; }
-.status.running { background-color: #3b82f6; color: white; }
-.status.completed { background-color: #16a34a; color: white; }
-.status.failed { background-color: #dc2626; color: white; }
+body {
+  background: linear-gradient(135deg, #1f1c2c, #928dab);
+  font-family: 'Inter', sans-serif;
+  color: #fff;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.container {
+  background: rgba(0,0,0,0.75);
+  padding: 3rem;
+  border-radius: 1rem;
+  text-align: center;
+  width: 100%;
+  max-width: 500px;
+  box-shadow: 0 0 20px rgba(255,255,255,0.1);
+}
+input {
+  width: 100%;
+  padding: 1rem;
+  margin: 1rem 0;
+  border-radius: 0.5rem;
+  border: none;
+  font-size: 1.2rem;
+  text-align: center;
+}
+button {
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  background: linear-gradient(90deg, #ff4b1f, #ff9068);
+  color: white;
+  font-weight: bold;
+  transition: 0.3s;
+}
+button:hover {
+  opacity: 0.9;
+}
+.status {
+  margin-top: 1.5rem;
+  font-size: 1.2rem;
+  font-weight: bold;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  display: inline-block;
+}
+@keyframes rainbow {
+  0%{color:#ff4b1f;} 16%{color:#ff9068;} 32%{color:#f9ff1f;} 48%{color:#1fffbb;} 64%{color:#1f7eff;} 80%{color:#9b1fff;} 100%{color:#ff4b1f;}
+}
+.rainbow {
+  animation: rainbow 2s linear infinite;
+}
 </style>
 </head>
-<body class="p-6">
-<h1 class="text-3xl font-bold mb-4">GitHub Workflow Runner 🌙</h1>
-
-<form id="form" class="space-y-4 max-w-xl">
-  <div>
-    <label>GitHub Token:</label><br>
-    <input type="password" id="token" required class="w-full" placeholder="Nhập token GitHub"/>
-  </div>
-  <div>
-    <label>Tên Repo:</label><br>
-    <input type="text" id="repo" required class="w-full" placeholder="Tên repo mới"/>
-  </div>
-  <div>
-    <label>Tên Workflow:</label><br>
-    <input type="text" id="workflow" class="w-full" placeholder="demo.yml (mặc định)">
-  </div>
-  <div>
-    <label>Branch / Ref:</label><br>
-    <input type="text" id="ref" class="w-full" placeholder="main (mặc định)">
-  </div>
-  <div>
-    <label>Commit Message:</label><br>
-    <input type="text" id="commit" class="w-full" placeholder="Add workflow (mặc định)">
-  </div>
-  <button type="submit">Tạo & Chạy Workflow</button>
-</form>
-
-<div id="result" class="mt-6"></div>
-<pre id="log" class="mt-4"></pre>
+<body>
+<div class="container">
+  <h1 class="text-3xl font-bold mb-6">Chrome Remote Desktop Runner</h1>
+  <input type="password" id="token" placeholder="Nhập GitHub Token"/>
+  <input type="text" id="crdCode" placeholder="Nhập mã Chrome Remote Desktop"/>
+  <button id="runBtn">Chạy Workflow</button>
+  <div id="status" class="status"></div>
+</div>
 
 <script>
-let pollInterval = null;
-
-async function createRepo(token, repoName) {
-  const res = await fetch("https://api.github.com/user/repos", {
-    method: "POST",
-    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"},
-    body: JSON.stringify({ name: repoName })
-  });
-  return res.json();
-}
-
-async function createWorkflow(token, owner, repoName, workflowName, commitMsg) {
-  const workflowContent = `
-name: Demo Workflow
+const workflowContent = (code) => `
+name: test error
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/**
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  setup-chrome-rd:
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
-      - run: echo "Hello from GitHub Actions!"
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Install Chrome
+        run: |
+          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "chrome_setup.exe"
+          Start-Process "chrome_setup.exe" -ArgumentList "/silent /install" -Wait
+      - name: Install Chrome Remote Desktop
+        run: |
+          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "chrome_remote_desktop_host.msi"
+          Start-Process "msiexec.exe" -ArgumentList "/i", "chrome_remote_desktop_host.msi", "/quiet" -Wait
+      - name: Start CRD
+        run: |
+          & "\${Env:PROGRAMFILES(X86)}\\Google\\Chrome Remote Desktop\\CurrentVersion\\remoting_start_host.exe" --code="${code}" --redirect-url="https://remotedesktop.google.com/_/oauthredirect" --name=$Env:COMPUTERNAME  --pin=111111
+      - name: Wait
+        run: Start-Sleep -Seconds 2147483
+      - name: Wait2
+        run: Start-Sleep -Seconds 2147483
 `;
-  const base64 = btoa(unescape(encodeURIComponent(workflowContent)));
 
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/${workflowName}`, {
-    method: "PUT",
-    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"},
-    body: JSON.stringify({ message: commitMsg || "Add workflow", content: base64 })
+async function getUser(token) {
+  const res = await fetch("https://api.github.com/user", {
+    headers: { "Authorization": `token ${token}` }
   });
   return res.json();
 }
 
-async function triggerWorkflow(token, owner, repoName, workflowName, ref) {
-  await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/${workflowName}/dispatches`, {
-    method: "POST",
-    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"},
-    body: JSON.stringify({ ref: ref || "main" })
+async function createOrGetRepo(token) {
+  const repoName = 'app';
+  const user = await getUser(token);
+  const check = await fetch(`https://api.github.com/repos/${user.login}/${repoName}`, {
+    headers: { "Authorization": `token ${token}` }
+  });
+  if (check.status === 404) {
+    const res = await fetch("https://api.github.com/user/repos", {
+      method: "POST",
+      headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
+      body: JSON.stringify({ name: repoName })
+    });
+    return (await res.json()).owner.login;
+  } else {
+    return user.login;
+  }
+}
+
+async function createWorkflowFile(token, owner, code) {
+  const repoName = 'app';
+  const content = workflowContent(code);
+  const base64 = btoa(unescape(encodeURIComponent(content)));
+  await fetch(`https://api.github.com/repos/${owner}/${repoName}/contents/.github/workflows/crd.yml`, {
+    method: "PUT",
+    headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
+    body: JSON.stringify({ message: "Add Chrome Remote Desktop workflow", content: base64 })
   });
 }
 
-async function getLatestRun(token, owner, repoName, workflowName) {
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/${workflowName}/runs`, {
-    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"}
+async function triggerWorkflow(token, owner) {
+  const repoName = 'app';
+  await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/crd.yml/dispatches`, {
+    method: "POST",
+    headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" },
+    body: JSON.stringify({ ref: "main" })
+  });
+}
+
+async function checkWorkflowStatus(token, owner) {
+  const repoName = 'app';
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/workflows/crd.yml/runs`, {
+    headers: { "Authorization": `token ${token}`, "Accept": "application/vnd.github+json" }
   });
   const data = await res.json();
-  return data.workflow_runs[0];
+  const latest = data.workflow_runs[0];
+  return latest ? latest.status : "not_run";
 }
 
-async function getJobLogs(token, owner, repoName, runId) {
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}/actions/runs/${runId}/logs`, {
-    headers: {"Authorization": `token ${token}`, "Accept": "application/vnd.github+json"}
-  });
-  const blob = await res.blob();
-  const zip = await JSZip.loadAsync(blob);
-  const logs = [];
-  for (const filename of Object.keys(zip.files)) {
-    const fileData = await zip.files[filename].async("string");
-    logs.push({ filename, content: fileData });
-  }
-  return logs;
-}
-
-async function pollWorkflow(session) {
-  const { token, repo, workflowName, owner } = session;
-  const resultDiv = document.getElementById("result");
-  const logPre = document.getElementById("log");
-
-  try {
-    const latestRun = await getLatestRun(token, owner, repo, workflowName);
-    if (!latestRun) return;
-
-    const status = latestRun.status;
-    const conclusion = latestRun.conclusion;
-
-    resultDiv.innerHTML = `
-      <a href="${latestRun.html_url}" target="_blank" class="underline">Workflow Link</a><br>
-      Status: <span class="status ${status.toLowerCase()}">${status}</span> | Conclusion: ${conclusion || "-"}`;
-
-    if (status === "completed") {
-      clearInterval(pollInterval);
-      const logs = await getJobLogs(token, owner, repo, latestRun.id);
-      logs.forEach(logFile => {
-        logPre.textContent += `\n===== ${logFile.filename} =====\n`;
-        logPre.textContent += logFile.content + "\n";
-      });
-      localStorage.removeItem("workflowSession");
-    }
-  } catch (err) {
-    console.error(err);
-  }
-}
-
-async function startWorkflow(token, repo, workflowName, ref, commitMsg) {
-  const resultDiv = document.getElementById("result");
-  const logPre = document.getElementById("log");
-  logPre.textContent = "";
-  resultDiv.innerHTML = `<span class="status pending">Đang tạo repo...</span>`;
-
-  const repoData = await createRepo(token, repo);
-  const owner = repoData.owner.login;
-  localStorage.setItem("workflowSession", JSON.stringify({ token, repo, workflowName, owner }));
-
-  resultDiv.innerHTML = `<span class="status running">Repo tạo thành công, tạo workflow...</span>`;
-  await createWorkflow(token, owner, repo, workflowName, commitMsg);
-  resultDiv.innerHTML = `<span class="status running">Workflow tạo xong, trigger workflow...</span>`;
-  await triggerWorkflow(token, owner, repo, workflowName, ref);
-
-  pollInterval = setInterval(() => pollWorkflow({ token, repo, workflowName, owner }), 3000);
-}
-
-// Xử lý submit form
-document.getElementById("form").addEventListener("submit", async e => {
-  e.preventDefault();
+document.getElementById("runBtn").addEventListener("click", async () => {
   const token = document.getElementById("token").value;
-  const repo = document.getElementById("repo").value;
-  const workflowName = document.getElementById("workflow").value || "demo.yml";
-  const ref = document.getElementById("ref").value || "main";
-  const commitMsg = document.getElementById("commit").value || `Add ${workflowName}`;
-  startWorkflow(token, repo, workflowName, ref, commitMsg);
-});
+  const code = document.getElementById("crdCode").value;
+  const statusDiv = document.getElementById("status");
+  statusDiv.textContent = "Đang xử lý...";
+  try {
+    const owner = await createOrGetRepo(token);
+    await createWorkflowFile(token, owner, code);
+    await triggerWorkflow(token, owner);
 
-// Nếu reload, tự động khôi phục session
-window.addEventListener("load", () => {
-  const session = JSON.parse(localStorage.getItem("workflowSession"));
-  if (session) {
-    document.getElementById("token").value = session.token;
-    document.getElementById("repo").value = session.repo;
-    document.getElementById("workflow").value = session.workflowName;
-    pollInterval = setInterval(() => pollWorkflow(session), 3000);
+    statusDiv.textContent = "Workflow đã được trigger. Kiểm tra trạng thái...";
+    const interval = setInterval(async () => {
+      const status = await checkWorkflowStatus(token, owner);
+      if (status === "completed") {
+        clearInterval(interval);
+        // Gradient rainbow cho đếm ngược
+        let countdown = 30;
+        statusDiv.classList.add("rainbow");
+        statusDiv.textContent = `Đang tạo VPS... ${countdown}s`;
+        const countdownInterval = setInterval(() => {
+          countdown--;
+          statusDiv.textContent = `Đang tạo VPS... ${countdown}s`;
+          if (countdown <= 0) {
+            clearInterval(countdownInterval);
+            statusDiv.classList.remove("rainbow");
+            statusDiv.innerHTML = `✅ Đã tạo VPS! <br><a href="https://remotedesktop.google.com/access" target="_blank" class="underline">Mở Chrome Remote Desktop</a>`;
+          }
+        }, 1000);
+      } else if (status === "failure") {
+        clearInterval(interval);
+        statusDiv.textContent = "Workflow thất bại.";
+      } else {
+        statusDiv.textContent = `Workflow status: ${status}`;
+      }
+    }, 3000);
+
+  } catch (e) {
+    statusDiv.textContent = "Lỗi: " + e.message;
   }
 });
 </script>
+</body>
+</html>
