@@ -232,7 +232,7 @@ function renderJobs() {
         </div>`;
     }).join('');
     updateFavicon();
-    saveState();
+    // Bỏ saveState() ở đây để tránh lưu không cần thiết mỗi lần render
 }
 
 async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl) {
@@ -249,6 +249,7 @@ async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl)
     const job = { tempId: `job-${Date.now()}-${Math.random()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(), html_url: null, name: `Initializing for ${owner}...`, command: deployCmd, owner, token, errorMessage: null };
     trackedJobs.push(job);
     renderJobs();
+    saveState(); // Lưu trạng thái ngay sau khi thêm job mới
 
     try {
         await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(async (e) => { if (e.message.includes("404")) { await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: true }) }); showToast(`Repo ${REPO_NAME} đã được tạo.`, 'info'); } else throw e; });
@@ -263,7 +264,6 @@ async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl)
         const body = { message: `ci: Deploying with template '${template}'`, content: base64Content, sha: fileSha || undefined };
         await githubApi(url, token, { method: "PUT", body: JSON.stringify(body) });
         
-        // This dispatch call might be redundant if the push to the workflow file triggers it, but it ensures execution.
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
 
         showToast(`Build triggered thành công cho user: ${owner}`, "success");
@@ -271,7 +271,8 @@ async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl)
     } catch (e) { 
         job.status = 'error'; 
         job.errorMessage = e.message; 
-        renderJobs(); 
+        renderJobs();
+        saveState(); // Lưu lại trạng thái lỗi của job
         showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error');
         throw e;
     }
@@ -287,7 +288,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateUIForTemplate();
 
     el.runBtn.addEventListener("click", async () => {
-        // YÊU CẦU: Đọc nhiều token từ textarea
         const tokens = el.tokenInput.value.trim().split('\n').map(t => t.trim()).filter(Boolean);
         if (tokens.length === 0) {
             showToast("Vui lòng nhập ít nhất một GitHub token.", "error"); return;
@@ -303,19 +303,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (pin && !/^\d{6,}$/.test(pin)) { showToast("PIN phải có ít nhất 6 chữ số.", "error"); return; }
         }
 
-        // YÊU CẦU: Chạy 5 lần cho git-tool-linux, 1 lần cho các loại khác
         const runsPerToken = template === 'git-tool-linux' ? 5 : 1;
-        const tokensToRun = tokens.slice(0, 10); // Giới hạn 10 token
+        const tokensToRun = tokens.slice(0, 10);
         const totalNewJobs = tokensToRun.length * runsPerToken;
 
-        // YÊU CẦU: Kiểm tra giới hạn 5 job
         if (trackedJobs.length + totalNewJobs > MAX_JOBS) {
             showToast(`Không thể tạo thêm ${totalNewJobs} job. Sẽ vượt quá giới hạn (${MAX_JOBS} job).`, "error");
             return;
         }
 
         el.runBtn.disabled = true; el.runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang gửi...';
-
         let successCount = 0;
         for (const token of tokensToRun) {
             for (let i = 0; i < runsPerToken; i++) {
@@ -327,17 +324,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
-        
         if (template === 'crd-windows' && successCount > 0) el.deployCmdInput.value = '';
         el.runBtn.disabled = false; el.runBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Deploy Build';
     });
 
     el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Refreshing statuses..."); await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
     
+    // SỬA LỖI Ở ĐÂY
     el.clearHistoryBtn.addEventListener('click', () => { 
         if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build?')) { 
             trackedJobs = []; 
-            renderJobs(); // renderJobs() now calls saveState() implicitly
+            saveState(); // <-- THÊM DÒNG NÀY ĐỂ LƯU TRẠNG THÁI RỖNG VÀO LOCALSTORAGE
+            renderJobs(); 
             showToast('Lịch sử đã được xóa.', 'info'); 
         } 
     });
@@ -349,32 +347,37 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!jobTempId) return;
         
         const job = trackedJobs.find(j => j.tempId === jobTempId);
-        if (!job || !job.id) return;
+        if (!job) return;
 
         const cancelBtn = e.target.closest('.cancel-btn');
         const rerunBtn = e.target.closest('.rerun-btn');
         const jobItem = e.target.closest('.job-item-clickable');
+        
+        if (jobItem && !cancelBtn && !rerunBtn) {
+             if (job.id) showJobDetails(job);
+             return;
+        }
 
         if (cancelBtn) {
             e.stopPropagation();
+            if (!job.id) { showToast("Job chưa có ID, không thể huỷ.", "warning"); return; }
             if (confirm(`Bạn có chắc muốn hủy job #${job.id} của user ${job.owner}?`)) {
                 showToast('Đang hủy job...', 'info');
                 try {
                     await cancelWorkflow(job.token, job.owner, job.id);
                     job.status = 'completed'; job.conclusion = 'cancelled';
-                    renderJobs();
+                    renderJobs(); saveState();
                     showToast('Job đã được hủy.', 'success');
                 } catch (err) { showToast(`Lỗi khi hủy: ${err.message}`, 'error');}
             }
         } else if (rerunBtn) { 
             e.stopPropagation(); 
+            if (!job.id) { showToast("Job chưa có ID, không thể chạy lại.", "warning"); return; }
             try { 
                 await rerunWorkflow(job.token, job.owner, job.id); 
                 showToast('Đang yêu cầu chạy lại job...', 'info'); 
                 startPolling(); 
             } catch (err) { showToast(`Lỗi khi chạy lại: ${err.message}`, 'error'); }
-        } else if (jobItem) { 
-            showJobDetails(job);
         }
     });
 
