@@ -66,20 +66,38 @@ input, select { background-color: rgba(0,0,0,0.2); border: 1px solid var(--borde
         </select>
     </div>
 
-    <div id="crd-options" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div id="accessPin-container">
-            <label class="block text-sm font-semibold mb-2" for="accessPin">Access PIN (6+ số)</label>
-            <input type="text" id="accessPin" placeholder="Mặc định: 123456" class="w-full p-3 rounded-xl"/>
+    <div id="crd-options" class="space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-semibold mb-2" for="accessPin">Access PIN (6+ số)</label>
+                <input type="text" id="accessPin" placeholder="Mặc định: 123456" class="w-full p-3 rounded-xl"/>
+            </div>
+            <div>
+                <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command</label>
+                <input type="text" id="deployCmd" placeholder='Dán lệnh CRD tại đây' class="w-full p-3 rounded-xl"/>
+            </div>
         </div>
-        <div id="deployCmd-container">
-            <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command</label>
-            <input type="text" id="deployCmd" placeholder='Dán lệnh CRD tại đây' class="w-full p-3 rounded-xl"/>
+    </div>
+    
+    <div id="git-tool-options" class="space-y-2 hidden">
+        <div>
+            <label class="block text-sm font-semibold mb-2" for="customRepoUrl">Custom Repository URL (Optional)</label>
+            <input type="text" id="customRepoUrl" placeholder="Mặc định: https://github.com/teo8764678/tool.git" class="w-full p-3 rounded-xl"/>
         </div>
+        <p class="text-xs text-[var(--warning-color)] p-2 bg-yellow-900/30 rounded-lg">
+            <i class="fas fa-info-circle mr-1"></i> Ghi chú: Để tối ưu hiệu suất, hãy chỉnh sửa file `config.json` trong repo của bạn, đặt giá trị `threads` thành `4`.
+        </p>
     </div>
 
     <button id="runBtn" class="w-full mt-6 py-3 text-xl font-bold rounded-xl bg-gradient-to-r from-blue-500 via-teal-500 to-green-500 hover:from-green-500 hover:to-blue-500 disabled:opacity-50"><i class="fas fa-play mr-2"></i> Deploy Build</button>
   </div>
-  <div class="flex justify-between items-center mb-4 px-2"><h2 class="text-xl font-bold text-[var(--text-secondary)]">Build History</h2><button id="refreshBtn" class="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Refresh Status"><i class="fas fa-sync-alt"></i></button></div>
+  <div class="flex justify-between items-center mb-4 px-2">
+      <h2 class="text-xl font-bold text-[var(--text-secondary)]">Build History</h2>
+      <div>
+        <button id="refreshBtn" class="text-[var(--text-secondary)] hover:text-[var(--text-primary)] px-2" title="Refresh Status"><i class="fas fa-sync-alt"></i></button>
+        <button id="clearHistoryBtn" class="text-[var(--text-secondary)] hover:text-[var(--text-primary)] px-2" title="Clear History"><i class="fas fa-trash-alt"></i></button>
+      </div>
+  </div>
   <div id="jobList" class="space-y-4"></div>
 </div>
 
@@ -98,19 +116,20 @@ let pollingInterval = null;
 // --- DOM Elements ---
 const el = {
     runBtn: document.getElementById("runBtn"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"),
-    jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"),
+    jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"),
     profileSelect: document.getElementById("profile-select"), addProfileBtn: document.getElementById("add-profile-btn"), deleteProfileBtn: document.getElementById("delete-profile-btn"),
     templateSelect: document.getElementById("template-select"),
-    crdOptions: document.getElementById("crd-options"),
+    crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"),
     modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'),
     modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon')
 };
 
 // --- Template Function ---
-function getWorkflowContent(template, command, pin = "123456") {
+function getWorkflowContent(template, command, pin = "123456", repoUrl = '') {
     switch(template) {
         case 'git-tool-linux':
-            return `name: Git Tool Runner\non: workflow_dispatch\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone https://github.com/teo8764678/tool.git\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
+            const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git';
+            return `name: Git Tool Runner\non: workflow_dispatch\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
         case 'crd-windows':
         default:
             return `name: CRD Environment Setup\non: workflow_dispatch\njobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - name: Setup Dependencies\n        run: |\n          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"\n          Start-Process -FilePath ".\\\\browser_setup.exe" -ArgumentList "/silent /install" -Wait\n          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"\n          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait\n      - name: Initialize Host Service\n        run: |\n          ${command} --pin=${pin}\n      - name: Run Background Task\n        run: Start-Sleep -Seconds 21000`;
@@ -134,10 +153,7 @@ const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/r
 async function deleteWorkflowFile(token, owner, sha) {
     const path = `.github/workflows/${WORKFLOW_NAME}`;
     const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
-    await githubApi(url, token, {
-        method: 'DELETE',
-        body: JSON.stringify({ message: 'chore: Remove workflow file after job cancellation', sha: sha }),
-    });
+    await githubApi(url, token, { method: 'DELETE', body: JSON.stringify({ message: 'chore: Remove workflow file after job cancellation', sha: sha }) });
 }
 
 // --- Polling Logic ---
@@ -156,7 +172,7 @@ async function pollJobStatuses() {
             if (matchingRun && (job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion)) {
                 job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build Triggered`;
                 changed = true;
-                if (job.status === 'completed') { showDesktopNotification(`Job #${run.run_number} ${job.conclusion}`, `Deployment finished: ${job.conclusion}.`); }
+                if (job.status === 'completed') { showDesktopNotification(`Job #${matchingRun.run_number} ${job.conclusion}`, `Deployment finished: ${job.conclusion}.`); }
             }
         });
         if (changed) renderJobs();
@@ -169,8 +185,10 @@ function updateUIForTemplate() {
     const selectedTemplate = el.templateSelect.value;
     if (selectedTemplate === 'crd-windows') {
         el.crdOptions.classList.remove('hidden');
+        el.gitToolOptions.classList.add('hidden');
     } else {
         el.crdOptions.classList.add('hidden');
+        el.gitToolOptions.classList.remove('hidden');
     }
 }
 function showToast(message, type = 'info') { const container = document.getElementById('toast-container'); const toast = document.createElement('div'); const iconClass = { success: 'fa-check-circle', info: 'fa-info-circle', error: 'fa-exclamation-triangle' }[type]; toast.className = `toast toast-${type}`; toast.innerHTML = `<i class="fas ${iconClass} mr-3"></i><span>${message}</span>`; container.appendChild(toast); setTimeout(() => toast.classList.add('show'), 10); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 4000); }
@@ -223,18 +241,15 @@ el.runBtn.addEventListener("click", async () => {
     const cmd = el.deployCmdInput.value;
     const pin = el.accessPinInput.value.trim();
     const template = el.templateSelect.value;
+    const repoUrl = el.customRepoUrl.value;
     if (!token) { showToast("Vui lòng nhập GitHub Token.", "error"); return; }
-    
-    // Updated Validation
     if (template === 'crd-windows') {
         if (!cmd) { showToast("Vui lòng nhập Deployment Command cho CRD.", "error"); return; }
         if (!cmd.includes('remoting_start_host.exe')) { showToast("Lệnh CRD không hợp lệ.", "error"); return; }
         if (pin && !/^\d{6,}$/.test(pin)) { showToast("PIN phải có ít nhất 6 chữ số.", "error"); return; }
     }
-    
     const activeJobsForProfile = trackedJobs.filter(j => j.profileId === activeProfileId && ['queued', 'in_progress'].includes(j.status));
     if (activeJobsForProfile.length >= MAX_JOBS_PER_PROFILE) { showToast(`Lỗi: Đã đạt giới hạn ${MAX_JOBS_PER_PROFILE} job đang chạy cho profile này.`, "error"); return; }
-    
     el.runBtn.disabled = true; el.runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang gửi...';
     const job = { tempId: `job-${Date.now()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(), html_url: '#', name: 'Initializing...', command: cmd, profileId: activeProfileId };
     trackedJobs.unshift(job);
@@ -244,7 +259,7 @@ el.runBtn.addEventListener("click", async () => {
         if (!ownerLogin) { const user = await githubApi("/user", token); ownerLogin = user.login; saveState(); }
         await githubApi(`/repos/${ownerLogin}/${REPO_NAME}`, token).catch(async (e) => { if (e.message.includes("404")) await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); else throw e; });
         const path = `.github/workflows/${WORKFLOW_NAME}`;
-        const content = getWorkflowContent(template, cmd, pin || '123456');
+        const content = getWorkflowContent(template, cmd, pin || '123456', repoUrl);
         const base64Content = btoa(unescape(encodeURIComponent(content)));
         const url = `/repos/${ownerLogin}/${REPO_NAME}/contents/${path}`;
         let fileSha = null;
@@ -259,6 +274,7 @@ el.runBtn.addEventListener("click", async () => {
     finally { el.runBtn.disabled = false; el.runBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Deploy Build'; }
 });
 el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
+el.clearHistoryBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build khỏi giao diện này? (Hành động này không ảnh hưởng đến các job trên GitHub)')) { trackedJobs = []; renderJobs(); showToast('Lịch sử đã được xóa.', 'info'); } });
 el.themeToggleBtn.addEventListener('click', () => { const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
 el.jobListContainer.addEventListener('click', async e => {
     const jobItem = e.target.closest('.job-item-clickable');
@@ -298,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
     el.themeToggleBtn.innerHTML = savedTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
     if (Notification.permission !== 'granted' && Notification.permission !== 'denied') Notification.requestPermission();
     loadState();
-    updateUIForTemplate(); // Set the initial UI state based on the template
+    updateUIForTemplate();
 });
 </script>
 </body>
