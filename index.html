@@ -33,6 +33,7 @@ input, select { background-color: rgba(0,0,0,0.2); border: 1px solid var(--borde
 #modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95); z-index: 50; width: 90%; max-width: 600px; opacity: 0; transition: all 0.3s ease; pointer-events: none; }
 #modal.show { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
 .job-item { transition: all 0.2s ease; } .job-item-clickable:hover { transform: translateY(-2px); border-color: var(--accent-color) !important; cursor: pointer; }
+.hidden { display: none; }
 </style>
 </head>
 <body class="flex justify-center items-start min-h-screen p-4 sm:p-8">
@@ -46,33 +47,36 @@ input, select { background-color: rgba(0,0,0,0.2); border: 1px solid var(--borde
 <div class="max-w-3xl w-full">
   <div class="card p-6 sm:p-8 rounded-2xl shadow-2xl mb-6">
     <div class="flex justify-between items-center mb-6"><h1 class="text-3xl font-bold drop-shadow-lg">Deployment Runner</h1><button id="theme-toggle-btn" class="text-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"><i class="fas fa-sun"></i></button></div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        <div>
-            <label class="block text-sm font-semibold mb-2" for="profile-select">Configuration Profile</label>
-            <div class="flex gap-2"><select id="profile-select" class="w-full p-3 rounded-xl"></select><button id="add-profile-btn" class="px-3 rounded-xl bg-[var(--accent-color)] text-white" title="Add Profile"><i class="fas fa-plus"></i></button><button id="delete-profile-btn" class="px-3 rounded-xl bg-[var(--error-color)] text-white" title="Delete Profile"><i class="fas fa-trash"></i></button></div>
-        </div>
-        <div>
+    
+    <div>
+        <label class="block text-sm font-semibold mb-2" for="profile-select">Configuration Profile</label>
+        <div class="flex gap-2 mb-4"><select id="profile-select" class="w-full p-3 rounded-xl"></select><button id="add-profile-btn" class="px-3 rounded-xl bg-[var(--accent-color)] text-white" title="Add Profile"><i class="fas fa-plus"></i></button><button id="delete-profile-btn" class="px-3 rounded-xl bg-[var(--error-color)] text-white" title="Delete Profile"><i class="fas fa-trash"></i></button></div>
+    </div>
+    
+    <div class="mb-4">
+        <label class="block text-sm font-semibold mb-2" for="token">GitHub Token (cần quyền `repo`)</label>
+        <input type="password" id="token" placeholder="Lưu trữ an toàn trong Profile" class="w-full p-3 rounded-xl"/>
+    </div>
+
+    <div>
+        <label class="block text-sm font-semibold mb-2" for="template-select">Workflow Template</label>
+        <select id="template-select" class="w-full p-3 rounded-xl mb-4">
+            <option value="crd-windows">CRD Environment (Windows)</option>
+            <option value="git-tool-linux">Git Tool Runner (Linux)</option>
+        </select>
+    </div>
+
+    <div id="crd-options" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div id="accessPin-container">
             <label class="block text-sm font-semibold mb-2" for="accessPin">Access PIN (6+ số)</label>
             <input type="text" id="accessPin" placeholder="Mặc định: 123456" class="w-full p-3 rounded-xl"/>
         </div>
-    </div>
-    <div class="mb-4">
-        <label class="block text-sm font-semibold mb-2" for="token">GitHub Token</label>
-        <input type="password" id="token" placeholder="Lưu trữ an toàn trong Profile" class="w-full p-3 rounded-xl"/>
-    </div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-            <label class="block text-sm font-semibold mb-2" for="template-select">Workflow Template</label>
-            <select id="template-select" class="w-full p-3 rounded-xl">
-                <option value="crd-windows">CRD Environment (Windows)</option>
-                <option value="git-tool-linux">Git Tool Runner (Linux)</option>
-            </select>
-        </div>
-        <div>
-            <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command / Arguments</label>
-            <input type="text" id="deployCmd" placeholder='Lệnh CRD hoặc tham số khác' class="w-full p-3 rounded-xl"/>
+        <div id="deployCmd-container">
+            <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command</label>
+            <input type="text" id="deployCmd" placeholder='Dán lệnh CRD tại đây' class="w-full p-3 rounded-xl"/>
         </div>
     </div>
+
     <button id="runBtn" class="w-full mt-6 py-3 text-xl font-bold rounded-xl bg-gradient-to-r from-blue-500 via-teal-500 to-green-500 hover:from-green-500 hover:to-blue-500 disabled:opacity-50"><i class="fas fa-play mr-2"></i> Deploy Build</button>
   </div>
   <div class="flex justify-between items-center mb-4 px-2"><h2 class="text-xl font-bold text-[var(--text-secondary)]">Build History</h2><button id="refreshBtn" class="text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Refresh Status"><i class="fas fa-sync-alt"></i></button></div>
@@ -80,18 +84,16 @@ input, select { background-color: rgba(0,0,0,0.2); border: 1px solid var(--borde
 </div>
 
 <script>
-// --- Hằng số và Trạng thái ---
-// URL WORKER CỦA BẠN ĐÃ ĐƯỢC THÊM VÀO ĐÂY
-const WORKER_WEBSOCKET_URL = 'wss://wild-grass-188f.theteoteo52.workers.dev'; 
-
+// --- Constants and State ---
 const REPO_NAME = 'ci-build-env';
 const WORKFLOW_NAME = 'build.yml';
 const MAX_JOBS_PER_PROFILE = 5;
+const POLLING_INTERVAL_MS = 3500;
 let trackedJobs = [];
 let profiles = [];
 let activeProfileId = null;
 let ownerLogin = '';
-let webSocket = null;
+let pollingInterval = null;
 
 // --- DOM Elements ---
 const el = {
@@ -99,6 +101,7 @@ const el = {
     jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"),
     profileSelect: document.getElementById("profile-select"), addProfileBtn: document.getElementById("add-profile-btn"), deleteProfileBtn: document.getElementById("delete-profile-btn"),
     templateSelect: document.getElementById("template-select"),
+    crdOptions: document.getElementById("crd-options"),
     modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'),
     modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon')
 };
@@ -128,61 +131,48 @@ async function githubApi(endpoint, token, options = {}) {
 const cancelWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/cancel`, t, { method: "POST" });
 const rerunWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" });
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t);
-
-// --- Real-time WebSocket Handling ---
-function initializeWebSocket() {
-    if (webSocket && webSocket.readyState < 2) return;
-    console.log("Connecting to real-time WebSocket...");
-    webSocket = new WebSocket(WORKER_WEBSOCKET_URL);
-
-    webSocket.onopen = () => {
-        console.log("Real-time connection established.");
-        showToast("Connected to real-time updates!", "info");
-    };
-
-    webSocket.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            if (data.event === 'workflow_run') {
-                console.log("Received workflow_run update:", data);
-                const run = data.run;
-                let jobUpdated = false;
-
-                let job = trackedJobs.find(j => j.id === run.id) || 
-                          trackedJobs.find(j => !j.id && Math.abs(new Date(j.startTime) - new Date(run.created_at)) < 30000);
-
-                if (job && (job.status !== run.status || job.conclusion !== run.conclusion)) {
-                    job.id = run.id;
-                    job.status = run.status;
-                    job.conclusion = run.conclusion;
-                    job.html_url = run.html_url;
-                    job.name = `#${run.run_number} - Build Triggered`;
-                    jobUpdated = true;
-                    if (job.status === 'completed') {
-                        showDesktopNotification(`Job #${run.run_number} ${job.conclusion}`, `Deployment finished: ${job.conclusion}.`);
-                    }
-                }
-                if (jobUpdated) renderJobs();
-            }
-        } catch (e) {
-            console.error("Error parsing WebSocket message:", e);
-        }
-    };
-
-    webSocket.onclose = () => {
-        console.log("WebSocket disconnected. Attempting to reconnect in 5 seconds...");
-        showToast("Real-time connection lost. Reconnecting...", "error");
-        webSocket = null;
-        setTimeout(initializeWebSocket, 5000);
-    };
-
-    webSocket.onerror = (err) => {
-        console.error("WebSocket error:", err);
-        webSocket.close();
-    };
+async function deleteWorkflowFile(token, owner, sha) {
+    const path = `.github/workflows/${WORKFLOW_NAME}`;
+    const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
+    await githubApi(url, token, {
+        method: 'DELETE',
+        body: JSON.stringify({ message: 'chore: Remove workflow file after job cancellation', sha: sha }),
+    });
 }
 
+// --- Polling Logic ---
+function stopPolling() { if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; console.log("Polling stopped."); } }
+async function pollJobStatuses() {
+    const activeJobs = trackedJobs.filter(j => ['queued', 'in_progress'].includes(j.status));
+    if (activeJobs.length === 0) { stopPolling(); return; }
+    const token = el.tokenInput.value;
+    if (!token || !ownerLogin) return;
+    try {
+        const { workflow_runs } = await githubApi(`/repos/${ownerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs`, token);
+        let changed = false;
+        trackedJobs.forEach(job => {
+            if (job.status === 'completed' || job.status === 'error') return;
+            const matchingRun = workflow_runs.find(run => (job.id && run.id === job.id) || (!job.id && Math.abs(new Date(job.startTime) - new Date(run.created_at)) < 30000));
+            if (matchingRun && (job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion)) {
+                job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build Triggered`;
+                changed = true;
+                if (job.status === 'completed') { showDesktopNotification(`Job #${run.run_number} ${job.conclusion}`, `Deployment finished: ${job.conclusion}.`); }
+            }
+        });
+        if (changed) renderJobs();
+    } catch (error) { showToast(`Polling error: ${error.message}`, 'error'); stopPolling(); }
+}
+function startPolling() { stopPolling(); if (trackedJobs.some(j => ['queued', 'in_progress'].includes(j.status))) { console.log("Active jobs found. Starting polling."); pollJobStatuses(); pollingInterval = setInterval(pollJobStatuses, POLLING_INTERVAL_MS); } }
+
 // --- UI, State, Profile, Modal Functions ---
+function updateUIForTemplate() {
+    const selectedTemplate = el.templateSelect.value;
+    if (selectedTemplate === 'crd-windows') {
+        el.crdOptions.classList.remove('hidden');
+    } else {
+        el.crdOptions.classList.add('hidden');
+    }
+}
 function showToast(message, type = 'info') { const container = document.getElementById('toast-container'); const toast = document.createElement('div'); const iconClass = { success: 'fa-check-circle', info: 'fa-info-circle', error: 'fa-exclamation-triangle' }[type]; toast.className = `toast toast-${type}`; toast.innerHTML = `<i class="fas ${iconClass} mr-3"></i><span>${message}</span>`; container.appendChild(toast); setTimeout(() => toast.classList.add('show'), 10); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 4000); }
 function saveState() { localStorage.setItem('profiles', JSON.stringify(profiles)); localStorage.setItem('activeProfileId', activeProfileId); localStorage.setItem('trackedJobs', JSON.stringify(trackedJobs)); localStorage.setItem('ownerLogin', ownerLogin); }
 function loadState() {
@@ -195,7 +185,7 @@ function loadState() {
     else if (!activeProfileId || !profiles.find(p => p.id === activeProfileId)) activeProfileId = profiles[0].id;
     updateProfileUI();
     renderJobs();
-    initializeWebSocket();
+    startPolling();
 }
 function updateFavicon() { const running = trackedJobs.some(j => j.status === 'in_progress'); const failed = trackedJobs.some(j => j.status === 'completed' && j.conclusion === 'failure'); let emoji = '🚀'; if (running) emoji = '⏳'; else if (failed) emoji = '❌'; el.favicon.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>${emoji}</text></svg>`;}
 function updateProfileUI() { el.profileSelect.innerHTML = profiles.map(p => `<option value="${p.id}" ${p.id === activeProfileId ? 'selected' : ''}>${p.name}</option>`).join(''); const active = profiles.find(p => p.id === activeProfileId); if (active) { el.tokenInput.value = active.token; el.accessPinInput.value = active.pin; } else { el.tokenInput.value = ''; el.accessPinInput.value = ''; } el.deleteProfileBtn.disabled = profiles.length <= 1; }
@@ -213,8 +203,8 @@ function renderJobs() {
     el.jobListContainer.innerHTML = trackedJobs.map(job => {
         let sClass = 'status-queued', sIcon = 'fa-solid fa-clock', sText = 'Queued', extra = '', actions = '';
         if(job.status !== 'queued') sText = job.status.replace('_', ' ');
-        if (job.status === 'in_progress' || job.status === 'queued') { if (job.id) actions += `<button data-run-id="${job.id}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Cancel"><i class="fas fa-stop"></i></button>`; }
-        if (job.status === 'completed') { actions += `<button data-run-id="${job.id}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Re-run"><i class="fas fa-redo"></i></button>`; }
+        if (job.status === 'in_progress' || job.status === 'queued') { if (job.id) actions += `<button data-run-id="${job.id}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Cancel & Delete Workflow"><i class="fas fa-stop"></i></button>`; }
+        if (job.status === 'completed' && job.conclusion === 'failure') { actions += `<button data-run-id="${job.id}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Re-run"><i class="fas fa-redo"></i></button>`; }
         if (job.status === 'error') { sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation'; sText = 'Setup Error'; extra = `<div class="text-sm text-orange-400 mt-2">${job.errorMessage}</div>`; } 
         else if (job.status === 'in_progress') { sClass = 'status-in_progress'; sIcon = 'fa-solid fa-gear fa-spin-pulse'; } 
         else if (job.status === 'completed') {
@@ -234,11 +224,17 @@ el.runBtn.addEventListener("click", async () => {
     const pin = el.accessPinInput.value.trim();
     const template = el.templateSelect.value;
     if (!token) { showToast("Vui lòng nhập GitHub Token.", "error"); return; }
-    if (template === 'crd-windows' && !cmd) { showToast("Vui lòng nhập Deployment Command cho CRD.", "error"); return; }
-    if (pin && !/^\d{6,}$/.test(pin)) { showToast("PIN phải có ít nhất 6 chữ số.", "error"); return; }
-    if (template === 'crd-windows' && !cmd.includes('remoting_start_host.exe')) { showToast("Lệnh CRD không hợp lệ.", "error"); return; }
+    
+    // Updated Validation
+    if (template === 'crd-windows') {
+        if (!cmd) { showToast("Vui lòng nhập Deployment Command cho CRD.", "error"); return; }
+        if (!cmd.includes('remoting_start_host.exe')) { showToast("Lệnh CRD không hợp lệ.", "error"); return; }
+        if (pin && !/^\d{6,}$/.test(pin)) { showToast("PIN phải có ít nhất 6 chữ số.", "error"); return; }
+    }
+    
     const activeJobsForProfile = trackedJobs.filter(j => j.profileId === activeProfileId && ['queued', 'in_progress'].includes(j.status));
     if (activeJobsForProfile.length >= MAX_JOBS_PER_PROFILE) { showToast(`Lỗi: Đã đạt giới hạn ${MAX_JOBS_PER_PROFILE} job đang chạy cho profile này.`, "error"); return; }
+    
     el.runBtn.disabled = true; el.runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang gửi...';
     const job = { tempId: `job-${Date.now()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(), html_url: '#', name: 'Initializing...', command: cmd, profileId: activeProfileId };
     trackedJobs.unshift(job);
@@ -246,7 +242,7 @@ el.runBtn.addEventListener("click", async () => {
     renderJobs();
     try {
         if (!ownerLogin) { const user = await githubApi("/user", token); ownerLogin = user.login; saveState(); }
-        await githubApi(`/repos/${ownerLogin}/${REPO_NAME}`, token).catch(async (e) => { if (e.message.includes("404")) await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: true }) }); else throw e; });
+        await githubApi(`/repos/${ownerLogin}/${REPO_NAME}`, token).catch(async (e) => { if (e.message.includes("404")) await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); else throw e; });
         const path = `.github/workflows/${WORKFLOW_NAME}`;
         const content = getWorkflowContent(template, cmd, pin || '123456');
         const base64Content = btoa(unescape(encodeURIComponent(content)));
@@ -258,21 +254,37 @@ el.runBtn.addEventListener("click", async () => {
         await githubApi(`/repos/${ownerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
         if (template === 'crd-windows') el.deployCmdInput.value = '';
         showToast("Build đã được kích hoạt thành công!", "success");
+        startPolling();
     } catch (e) { job.status = 'error'; job.errorMessage = e.message; renderJobs(); showToast(`Lỗi thiết lập: ${e.message}`, 'error'); } 
     finally { el.runBtn.disabled = false; el.runBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Deploy Build'; }
 });
-el.refreshBtn.addEventListener('click', async () => {
-    const icon = el.refreshBtn.querySelector('i');
-    icon.classList.add('fa-spin');
-    showToast("Manually refreshing job statuses...", "info");
-    const token = el.tokenInput.value;
-    if (!token || !ownerLogin) { showToast("Token or Owner not set for refresh.", "error"); icon.classList.remove('fa-spin'); return; }
-    try { const { workflow_runs } = await githubApi(`/repos/${ownerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs`, token); let changed = false; trackedJobs.forEach(job => { const matchingRun = workflow_runs.find(run => (job.id && run.id === job.id) || (!job.id && Math.abs(new Date(job.startTime) - new Date(run.created_at)) < 30000)); if (matchingRun && (job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion)) { job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build Triggered`; changed = true; } }); if (changed) renderJobs(); } 
-    catch(e) { showToast(`Refresh failed: ${e.message}`, 'error'); } 
-    finally { setTimeout(() => icon.classList.remove('fa-spin'), 500); }
-});
+el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
 el.themeToggleBtn.addEventListener('click', () => { const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
-el.jobListContainer.addEventListener('click', async e => { const jobItem = e.target.closest('.job-item-clickable'); const cancelBtn = e.target.closest('.cancel-btn'); const rerunBtn = e.target.closest('.rerun-btn'); const token = el.tokenInput.value; if (cancelBtn) { e.stopPropagation(); const runId = cancelBtn.dataset.runId; if (confirm('Are you sure you want to cancel this job?')) { try { await cancelWorkflow(token, ownerLogin, runId); showToast('Job cancellation requested.', 'info'); } catch (err) { showToast(`Error: ${err.message}`, 'error'); } } } else if (rerunBtn) { e.stopPropagation(); const runId = rerunBtn.dataset.runId; try { await rerunWorkflow(token, ownerLogin, runId); showToast('Job re-run requested.', 'info'); } catch (err) { showToast(`Error: ${err.message}`, 'error'); } } else if (jobItem) { const job = trackedJobs.find(j => j.tempId === jobItem.dataset.jobTempId); if (job && job.id) showJobDetails(job); } });
+el.jobListContainer.addEventListener('click', async e => {
+    const jobItem = e.target.closest('.job-item-clickable');
+    const cancelBtn = e.target.closest('.cancel-btn');
+    const rerunBtn = e.target.closest('.rerun-btn');
+    const token = el.tokenInput.value;
+    if (cancelBtn) {
+        e.stopPropagation();
+        const runId = cancelBtn.dataset.runId;
+        if (confirm('Bạn có chắc muốn hủy job này? Hành động này sẽ DỪNG job và XÓA file workflow trên GitHub.')) {
+            showToast('Đang hủy job...', 'info');
+            try {
+                await cancelWorkflow(token, ownerLogin, runId);
+                showToast('Job đã hủy. Đang xóa file workflow...', 'info');
+                const filePath = `.github/workflows/${WORKFLOW_NAME}`;
+                const fileData = await githubApi(`/repos/${ownerLogin}/${REPO_NAME}/contents/${filePath}`, token);
+                await deleteWorkflowFile(token, ownerLogin, fileData.sha);
+                trackedJobs = trackedJobs.filter(j => j.id != runId);
+                renderJobs();
+                showToast('Job và file workflow đã được xóa.', 'success');
+            } catch (err) { showToast(`Lỗi: ${err.message}`, 'error'); const job = trackedJobs.find(j => j.id == runId); if (job) job.status = 'completed'; renderJobs(); }
+        }
+    } else if (rerunBtn) { e.stopPropagation(); const runId = rerunBtn.dataset.runId; try { await rerunWorkflow(token, ownerLogin, runId); showToast('Đang yêu cầu chạy lại job...', 'info'); startPolling(); } catch (err) { showToast(`Lỗi: ${err.message}`, 'error'); }
+    } else if (jobItem) { const job = trackedJobs.find(j => j.tempId === jobItem.dataset.jobTempId); if (job && job.id) showJobDetails(job); }
+});
+el.templateSelect.addEventListener('change', updateUIForTemplate);
 el.addProfileBtn.addEventListener('click', () => addProfile(false));
 el.deleteProfileBtn.addEventListener('click', deleteProfile);
 el.profileSelect.addEventListener('change', (e) => switchProfile(e.target.value));
@@ -286,6 +298,7 @@ document.addEventListener('DOMContentLoaded', () => {
     el.themeToggleBtn.innerHTML = savedTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
     if (Notification.permission !== 'granted' && Notification.permission !== 'denied') Notification.requestPermission();
     loadState();
+    updateUIForTemplate(); // Set the initial UI state based on the template
 });
 </script>
 </body>
