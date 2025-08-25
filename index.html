@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>App Deployment Runner</title>
-<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -21,8 +21,9 @@ body { background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary
 input, select, textarea { background-color: rgba(0,0,0,0.2); border: 1px solid var(--border-color); color: var(--text-primary); }
 [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea { background-color: #f9fafb; border-color: #e5e7eb; }
 .status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-.status-queued { background-color: #6b7280; color: #fff; } .status-in_progress { background-color: var(--accent-color); color: #fff; }
-.status-completed-success { background-color: var(--success-color); color: #fff; } .status-completed-failure { background-color: var(--error-color); color: #fff; }
+.status-queued { background-color: #6b7280; color: #fff; }
+.status-completed-success { background-color: var(--success-color); color: #fff; }
+.status-completed-failure { background-color: var(--error-color); color: #fff; }
 .status-error { background-color: var(--warning-color); color: #fff; }
 #toast-container { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.75rem; }
 .toast { display: flex; align-items: center; padding: 1rem; border-radius: 0.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.4); color: white; opacity: 0; transform: translateY(100%); transition: all 0.3s ease-in-out; }
@@ -167,7 +168,7 @@ code { background-color: rgba(128,128,128,0.2); color: var(--text-primary); padd
 // --- Constants and State ---
 const REPO_NAME = 'ci-build-env'; const WORKFLOW_NAME = 'build.yml'; const MAX_JOBS_PER_TOKEN = 5;
 let trackedJobs = []; let pollingTimeout = null; let globalOwnerLogin = '';
-let apiCache = {}; // ETag cache
+let apiCache = {}; // ETag cache for high-speed polling
 
 // --- DOM Elements ---
 const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), cancelAllBtn: document.getElementById("cancelAllBtn"), quickCancelBtn: document.getElementById("quickCancelBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon'), templateDescription: document.getElementById('template-description'), tokenHelpBtn: document.getElementById('token-help-btn'), tokenHelpModalOverlay: document.getElementById('token-help-modal-overlay'), tokenHelpModal: document.getElementById('token-help-modal'), tokenHelpCloseBtn: document.getElementById('token-help-close-btn')};
@@ -200,34 +201,17 @@ function getWorkflowContent(template, command, pin = "123456", repoUrl = '', wit
 async function githubApi(endpoint, token, options = {}) {
     const url = `https://api.github.com${endpoint}`;
     const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers };
-    
-    // Add ETag to request if available in cache
-    if (options.method === 'GET' || !options.method) {
-        if (apiCache[url] && apiCache[url].etag) {
-            headers['If-None-Match'] = apiCache[url].etag;
-        }
+    if ((options.method === 'GET' || !options.method) && apiCache[url]?.etag) {
+        headers['If-None-Match'] = apiCache[url].etag;
     }
-
     const response = await fetch(url, { ...options, headers });
-
-    if (response.status === 304) { // Not Modified
-        console.log(`[Cache HIT] ETag match for ${endpoint}`);
-        return apiCache[url].data; // Return cached data
-    }
-    
+    if (response.status === 304) { return apiCache[url].data; }
     if (!response.ok) { const errorData = await response.json(); throw new Error(`Lỗi GitHub API (${response.status}): ${errorData.message || 'Lỗi không xác định'}`); }
-    
     const data = response.status === 204 || response.status === 202 ? null : await response.json();
-
-    // Update cache for GET requests
     if (response.status === 200 && (options.method === 'GET' || !options.method)) {
         const etag = response.headers.get('ETag');
-        if (etag) {
-            console.log(`[Cache MISS] New ETag for ${endpoint}`);
-            apiCache[url] = { etag, data };
-        }
+        if (etag) { apiCache[url] = { etag, data }; }
     }
-    
     return data;
 }
 
@@ -235,7 +219,7 @@ const cancelWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/
 const rerunWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" });
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
 
-// --- Adaptive Polling Logic ---
+// --- Adaptive Polling Logic (Highest Speed via Caching) ---
 function stopPolling() { if (pollingTimeout) { clearTimeout(pollingTimeout); pollingTimeout = null; } }
 async function pollJobStatuses() {
     stopPolling();
@@ -251,14 +235,10 @@ async function pollJobStatuses() {
 
     try {
         const { workflow_runs } = await githubApi(`/repos/${globalOwnerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?status=in_progress,queued&per_page=100`, pollToken, { method: 'GET' });
-        
-        // Use a Set for faster lookup of active run IDs
         const activeRunIds = new Set(workflow_runs.map(run => run.id));
 
         for (const job of activeJobs) {
             if (job.id && !activeRunIds.has(job.id)) {
-                // The job was active but is no longer in the active list, it likely just finished.
-                // We must fetch its final status individually.
                 try {
                     const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.id}`, job.token, { method: 'GET' });
                     if (finalRunData && (job.status !== finalRunData.status || job.conclusion !== finalRunData.conclusion)) {
@@ -298,28 +278,55 @@ function updateUIForTemplate() {
 function showToast(message, type = 'info') { const container = document.getElementById('toast-container'); const toast = document.createElement('div'); const iconClass = { success: 'fa-check-circle', info: 'fa-info-circle', error: 'fa-exclamation-triangle' }[type]; toast.className = `toast toast-${type}`; toast.innerHTML = `<i class="fas ${iconClass} mr-3"></i><span>${message}</span>`; container.appendChild(toast); setTimeout(() => toast.classList.add('show'), 10); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 4000); }
 function saveState() { localStorage.setItem('trackedJobs', JSON.stringify(trackedJobs)); localStorage.setItem('appRunnerSettings', JSON.stringify({ tokens: el.tokenInput.value, pin: el.accessPinInput.value, globalOwner: globalOwnerLogin, template: el.templateSelect.value })); }
 function loadState() { const savedJobs = JSON.parse(localStorage.getItem('trackedJobs') || '[]'); trackedJobs = savedJobs.map(job => ({ ...job, startTime: new Date(job.startTime) })); const settings = JSON.parse(localStorage.getItem('appRunnerSettings') || '{}'); el.tokenInput.value = settings.tokens || ''; el.accessPinInput.value = settings.pin || ''; el.templateSelect.value = settings.template || 'crd-windows'; globalOwnerLogin = settings.globalOwner || ''; renderJobs(); startPolling(); }
-function updateFavicon() { const running = trackedJobs.some(j => j.status === 'in_progress'); const failed = trackedJobs.some(j => j.status === 'completed' && j.conclusion === 'failure'); let emoji = '🚀'; if (running) emoji = '⏳'; else if (failed) emoji = '❌'; el.favicon.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>${emoji}</text></svg>`;}
+function updateFavicon() { const running = trackedJobs.some(j => j.status === 'in_progress'); const failed = trackedJobs.some(j => j.status === 'completed' && j.conclusion === 'failure'); let emoji = '🚀'; if (running) emoji = '✅'; else if (failed) emoji = '❌'; el.favicon.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>${emoji}</text></svg>`;}
 function openModal(modalEl, overlayEl) { overlayEl.classList.add('show'); modalEl.classList.add('show'); }
 function closeModal(modalEl, overlayEl) { overlayEl.classList.remove('show'); modalEl.classList.remove('show'); }
 async function showJobDetails(job) { el.modalTitle.textContent = `Chi tiết cho ${job.name}`; el.modalContent.innerHTML = `<div class="text-center"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`; openModal(el.modal, el.modalOverlay); try { const { jobs } = await getJobDetails(job.token, job.owner, job.id); const detailsHtml = jobs[0].steps.map(step => { const duration = step.completed_at ? (new Date(step.completed_at) - new Date(step.started_at)) : 0; const seconds = Math.floor((duration / 1000) % 60).toString().padStart(2, '0'); const minutes = Math.floor((duration / (1000 * 60)) % 60); let icon = 'fa-clock'; let color = 'text-[var(--text-secondary)]'; if (step.status === 'completed') { icon = step.conclusion === 'success' ? 'fa-check-circle' : 'fa-times-circle'; color = step.conclusion === 'success' ? 'text-[var(--success-color)]' : 'text-[var(--error-color)]'; } return `<div class="flex items-center justify-between py-2 border-b border-[var(--border-color)]"> <div class="flex items-center gap-3"><i class="fas ${icon} ${color}"></i><span>${step.name}</span></div> <div class="text-sm text-[var(--text-secondary)]">${minutes}m ${seconds}s</div> </div>`; }).join(''); el.modalContent.innerHTML = detailsHtml || '<div class="text-center text-[var(--text-secondary)]">Không có chi tiết các bước.</div>'; } catch (e) { el.modalContent.innerHTML = `<div class="text-[var(--error-color)]">Không thể tải chi tiết job: ${e.message}</div>`; } }
 function showDesktopNotification(title, body) { if (Notification.permission === 'granted') new Notification(title, { body }); }
 
 // --- Main Rendering ---
-function getGroupInfo(job) { switch (job.status) { case 'in_progress': case 'queued': return { key: 'active', title: '🚀 Đang hoạt động', order: 1 }; case 'error': return { key: 'error', title: '⚠️ Lỗi thiết lập', order: 2 }; case 'completed': if (job.conclusion === 'failure' || job.conclusion === 'cancelled') { return { key: 'failed', title: '❌ Thất bại / Đã hủy', order: 3 }; } return { key: 'success', title: '✅ Hoàn thành', order: 4 }; default: return { key: 'unknown', title: '📋 Khác', order: 5 }; } }
-
 function renderJobItem(job) {
-    let sClass = 'status-queued', sIcon = 'fa-solid fa-clock fa-spin-pulse', sText = 'Đang chờ', actions = '';
-    if (job.status === 'in_progress') { sClass = 'status-in_progress'; sIcon = 'fa-solid fa-gear fa-spin'; sText = 'Đang chạy'; }
-    else if (job.status === 'completed') { if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle'; sText = 'Thành công'; } else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle'; sText = job.conclusion || 'Thất bại'; } }
-    else if (job.status === 'error') { sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation'; sText = 'Lỗi'; }
+    let sClass, sIcon, sText;
+    let actions = '';
+
+    switch(job.status) {
+        case 'in_progress':
+            sClass = 'status-completed-success';
+            sIcon = 'fa-solid fa-gear fa-spin text-[var(--success-color)]';
+            sText = 'Job đang chạy';
+            break;
+        case 'completed':
+            if (job.conclusion === 'success') {
+                sClass = 'status-completed-success';
+                sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]';
+                sText = 'Thành công';
+            } else {
+                sClass = 'status-completed-failure';
+                sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]';
+                sText = job.conclusion || 'Thất bại';
+            }
+            break;
+        case 'error':
+            sClass = 'status-error';
+            sIcon = 'fa-solid fa-triangle-exclamation text-[var(--warning-color)]';
+            sText = 'Lỗi';
+            break;
+        default: // queued
+            sClass = 'status-queued';
+            sIcon = 'fa-solid fa-clock fa-spin-pulse';
+            sText = 'Đang chờ';
+            break;
+    }
+
     if (job.id) {
         if (job.status === 'in_progress' || job.status === 'queued') { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Hủy Job"><i class="fas fa-stop"></i></button>`; }
         if (job.status === 'completed') { actions += `<button data-job-temp-id="${job.tempId}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Chạy lại"><i class="fas fa-redo"></i></button>`; }
         if (job.html_url) { actions += `<a href="${job.html_url}" target="_blank" class="px-2 py-1 text-xs rounded bg-gray-600 text-white" title="Xem trên GitHub"><i class="fab fa-github"></i></a>`; }
     }
+    
     return `<div class="flex justify-between items-center"><div class="flex items-center gap-3 overflow-hidden">
         <input type="checkbox" class="job-checkbox flex-shrink-0" data-job-temp-id="${job.tempId}">
-        <i class="${sIcon} ${sClass.includes('success') ? 'text-[var(--success-color)]' : sClass.includes('failure') ? 'text-[var(--error-color)]' : ''} text-xl w-6 text-center"></i>
+        <i class="${sIcon} text-xl w-6 text-center"></i>
         <div class="overflow-hidden">
             <span class="font-semibold text-md truncate">${job.name}</span>
             <div class="text-xs text-[var(--text-secondary)]" title="${new Date(job.startTime).toLocaleString()}">${timeAgo(new Date(job.startTime))}</div>
@@ -331,21 +338,12 @@ function renderJobItem(job) {
 
 function renderJobs() {
     if (trackedJobs.length === 0) {
-        el.jobListContainer.innerHTML = `<div class="card rounded-lg p-8 text-center text-[var(--text-secondary)]">
-            <h3 class="text-2xl font-bold mb-4 text-[var(--text-primary)]">Chào mừng bạn!</h3>
-            <p class="mb-6">Chưa có job nào được chạy. Hãy làm theo hướng dẫn để bắt đầu:</p>
-            <ol class="text-left max-w-md mx-auto space-y-3">
-                <li class="flex items-start"><span class="bg-[var(--accent-color)] text-white rounded-full w-6 h-6 text-sm flex items-center justify-center mr-3 font-bold">1</span> Lấy GitHub Token và dán vào ô ở trên (có nút hướng dẫn chi tiết).</li>
-                <li class="flex items-start"><span class="bg-[var(--accent-color)] text-white rounded-full w-6 h-6 text-sm flex items-center justify-center mr-3 font-bold">2</span> Chọn một "Mẫu Workflow" phù hợp với nhu cầu của bạn.</li>
-                <li class="flex items-start"><span class="bg-[var(--accent-color)] text-white rounded-full w-6 h-6 text-sm flex items-center justify-center mr-3 font-bold">3</span> Điền các thông tin cần thiết và nhấn nút "Chạy Job".</li>
-            </ol>
-        </div>`;
+        el.jobListContainer.innerHTML = `<div class="card rounded-lg p-8 text-center text-[var(--text-secondary)]"><h3 class="text-2xl font-bold mb-4 text-[var(--text-primary)]">Chào mừng bạn!</h3><p class="mb-6">Chưa có job nào được chạy. Hãy làm theo hướng dẫn để bắt đầu:</p><ol class="text-left max-w-md mx-auto space-y-3"><li class="flex items-start"><span class="bg-[var(--accent-color)] text-white rounded-full w-6 h-6 text-sm flex items-center justify-center mr-3 font-bold">1</span> Lấy GitHub Token và dán vào ô ở trên (có nút hướng dẫn chi tiết).</li><li class="flex items-start"><span class="bg-[var(--accent-color)] text-white rounded-full w-6 h-6 text-sm flex items-center justify-center mr-3 font-bold">2</span> Chọn một "Mẫu Workflow" phù hợp với nhu cầu của bạn.</li><li class="flex items-start"><span class="bg-[var(--accent-color)] text-white rounded-full w-6 h-6 text-sm flex items-center justify-center mr-3 font-bold">3</span> Điền các thông tin cần thiết và nhấn nút "Chạy Job".</li></ol></div>`;
         updateFavicon(); return;
     }
 
     const jobsByOwner = trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {});
     
-    // Efficiently update or add owner groups
     for (const owner in jobsByOwner) {
         let ownerGroup = el.jobListContainer.querySelector(`.owner-group[data-owner="${owner}"]`);
         if (!ownerGroup) {
@@ -357,7 +355,7 @@ function renderJobs() {
             el.jobListContainer.appendChild(ownerGroup);
         }
 
-        const jobs = jobsByOwner[owner].sort((a, b) => { const groupA = getGroupInfo(a); const groupB = getGroupInfo(b); if (groupA.order !== groupB.order) return groupA.order - groupB.order; return new Date(b.startTime) - new Date(a.startTime); });
+        const jobs = jobsByOwner[owner].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
         const activeJobCount = jobs.filter(j => ['queued', 'in_progress'].includes(j.status)).length;
         
         ownerGroup.querySelector('.active-count').textContent = `${activeJobCount} Đang chạy`;
@@ -368,27 +366,20 @@ function renderJobs() {
         const existingJobIds = new Set([...jobsContent.children].map(el => el.dataset.jobTempId));
         const currentJobIds = new Set(jobs.map(j => j.tempId));
         
-        // Remove deleted jobs
-        existingJobIds.forEach(id => {
-            if (!currentJobIds.has(id)) {
-                jobsContent.querySelector(`[data-job-temp-id="${id}"]`)?.remove();
-            }
-        });
+        existingJobIds.forEach(id => { if (!currentJobIds.has(id)) jobsContent.querySelector(`[data-job-temp-id="${id}"]`)?.remove(); });
 
-        // Add or update jobs
         jobs.forEach(job => {
             let jobItem = jobsContent.querySelector(`.job-item[data-job-temp-id="${job.tempId}"]`);
             if (!jobItem) {
                 jobItem = document.createElement('div');
                 jobItem.className = `card p-3 rounded-md job-item ${job.id ? 'job-item-clickable' : ''}`;
                 jobItem.dataset.jobTempId = job.tempId;
-                jobsContent.appendChild(jobItem); // Append at the end, sorting is handled by array
+                jobsContent.appendChild(jobItem);
             }
             jobItem.innerHTML = renderJobItem(job);
         });
     }
     
-    // Remove groups for owners who no longer have jobs
     el.jobListContainer.querySelectorAll('.owner-group').forEach(group => { if (!jobsByOwner[group.dataset.owner]) group.remove(); });
     updateFavicon();
 }
