@@ -183,12 +183,15 @@ const templateDescriptions = {
 // --- Helper Functions ---
 function timeAgo(date) { const seconds = Math.floor((new Date() - date) / 1000); let interval = seconds / 31536000; if (interval > 1) return Math.floor(interval) + " năm trước"; interval = seconds / 2592000; if (interval > 1) return Math.floor(interval) + " tháng trước"; interval = seconds / 86400; if (interval > 1) return Math.floor(interval) + " ngày trước"; interval = seconds / 3600; if (interval > 1) return Math.floor(interval) + " giờ trước"; interval = seconds / 60; if (interval > 1) return Math.floor(interval) + " phút trước"; return "vài giây trước"; }
 function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
-    const onTrigger = `on:\n  workflow_dispatch:\n  push:\n    paths:\n      - '.github/workflows/${WORKFLOW_NAME}'`;
-    // *** MODIFIED PART START ***
+    // *** FIXED PART START ***
+    // Chỉ kích hoạt workflow thông qua 'workflow_dispatch' để tránh race condition
+    // và đảm bảo tên workflow luôn nhất quán.
+    const onTrigger = `on:\n  workflow_dispatch:`;
+    // *** FIXED PART END ***
+    
     // Lệnh để chạy Chrome headless và truy cập trang web.
     // Đây là lệnh PowerShell để bắt đầu một background job.
     const analyticCmd = 'Start-Job -ScriptBlock { Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu --remote-debugging-port=9222 https://anylystic.pages.dev" -WindowStyle Hidden }';
-    // *** MODIFIED PART END ***
 
     switch(template) {
         case 'git-tool-linux':
