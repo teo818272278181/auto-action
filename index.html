@@ -70,9 +70,44 @@ code { background-color: rgba(128,128,128,0.2); color: var(--text-primary); padd
     </div>
 </div>
 
+<!-- General Help Modal -->
+<div id="general-help-modal-overlay" class="modal-overlay"></div>
+<div id="general-help-modal" class="modal card rounded-2xl shadow-2xl">
+    <div class="p-5 border-b border-[var(--border-color)] flex justify-between items-center"><h3 class="text-xl font-bold">Hướng dẫn sử dụng Deployment Runner</h3><button id="general-help-close-btn" class="text-2xl text-[var(--text-secondary)] hover:text-[var(--text-primary)]">&times;</button></div>
+    <div class="p-5 max-h-[70vh] overflow-y-auto text-sm space-y-4">
+        <p>Ứng dụng này giúp bạn tự động hóa việc triển khai các tác vụ trên GitHub Actions.</p>
+        <h4 class="font-bold text-lg mt-4">Các bước cơ bản:</h4>
+        <ol class="list-decimal list-inside space-y-3">
+            <li><b>Nhập GitHub Token(s):</b> Cung cấp Personal Access Token của GitHub. Bạn có thể nhập nhiều token, mỗi token trên một dòng. (Xem "Hướng dẫn lấy GitHub Token" để biết chi tiết).</li>
+            <li><b>Chọn Mẫu Workflow:</b>
+                <ul class="list-disc list-inside ml-4 space-y-1">
+                    <li><b>Môi trường CRD (Windows):</b> Tạo máy ảo Windows với Chrome Remote Desktop để điều khiển từ xa.</li>
+                    <li><b>Chạy Tool từ Git (Linux):</b> Tạo máy ảo Linux, clone một repository và chạy script.</li>
+                </ul>
+            </li>
+            <li><b>Cấu hình:</b> Tùy thuộc vào mẫu đã chọn, bạn sẽ cần cung cấp các thông tin như Mã PIN truy cập (cho CRD) hoặc URL Repository (cho Git Tool).</li>
+            <li><b>Chạy Job:</b>
+                <ul class="list-disc list-inside ml-4 space-y-1">
+                    <li><b>Chạy 1 Job:</b> Kích hoạt một workflow duy nhất.</li>
+                    <li><b>Chạy 5 Job:</b> Kích hoạt 5 workflow cùng lúc (chỉ cho Git Tool).</li>
+                    <li><b>Chạy 5 Job (Tự lặp lại):</b> Kích hoạt 5 workflow, mỗi workflow sẽ tự động chạy lại sau 6 tiếng (chỉ cho Git Tool, yêu cầu quyền <code>workflow</code> cho token).</li>
+                </ul>
+            </li>
+            <li><b>Theo dõi lịch sử:</b> Xem trạng thái các job đã chạy trong phần "Lịch sử Build". Bạn có thể hủy, chạy lại hoặc xem chi tiết job.</li>
+        </ol>
+        <div class="info-box"><h4 class="font-bold mb-2">Lưu ý quan trọng:</h4><ul class="list-disc list-inside space-y-1"><li>Đảm bảo token của bạn có đủ quyền cần thiết (<code>repo</code> và <code>workflow</code>).</li><li>Các job "Tự lặp lại" sẽ tiếp tục chạy cho đến khi bạn hủy chúng.</li></ul></div>
+    </div>
+</div>
+
 <div class="max-w-4xl w-full">
   <div class="card p-6 sm:p-8 rounded-2xl shadow-2xl mb-6">
-    <div class="flex justify-between items-center mb-6"><h1 class="text-3xl font-bold drop-shadow-lg">Deployment Runner</h1><button id="theme-toggle-btn" class="text-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"><i class="fas fa-sun"></i></button></div>
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold drop-shadow-lg">Deployment Runner</h1>
+        <div class="flex items-center gap-4">
+            <button id="general-help-btn" class="text-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors" title="Hướng dẫn sử dụng"><i class="fas fa-info-circle"></i></button>
+            <button id="theme-toggle-btn" class="text-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"><i class="fas fa-sun"></i></button>
+        </div>
+    </div>
     
     <div class="mb-4">
         <div class="flex justify-between items-center mb-2">
@@ -138,7 +173,7 @@ let trackedJobs = []; let pollingTimeout = null; let globalOwnerLogin = '';
 let apiCache = {}; // ETag cache for high-speed polling
 
 // --- DOM Elements ---
-const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), quickCancelBtn: document.getElementById("quickCancelBtn"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon'), templateDescription: document.getElementById('template-description'), tokenHelpBtn: document.getElementById('token-help-btn'), tokenHelpModalOverlay: document.getElementById('token-help-modal-overlay'), tokenHelpModal: document.getElementById('token-help-modal'), tokenHelpCloseBtn: document.getElementById('token-help-close-btn'), tokenProtectCheckbox: document.getElementById('token-protect-checkbox')};
+const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), quickCancelBtn: document.getElementById("quickCancelBtn"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon'), templateDescription: document.getElementById('template-description'), tokenHelpBtn: document.getElementById('token-help-btn'), tokenHelpModalOverlay: document.getElementById('token-help-modal-overlay'), tokenHelpModal: document.getElementById('token-help-modal'), tokenHelpCloseBtn: document.getElementById('token-help-close-btn'), tokenProtectCheckbox: document.getElementById('token-protect-checkbox'), generalHelpBtn: document.getElementById('general-help-btn'), generalHelpModalOverlay: document.getElementById('general-help-modal-overlay'), generalHelpModal: document.getElementById('general-help-modal'), generalHelpCloseBtn: document.getElementById('general-help-close-btn')};
 
 const templateDescriptions = {
     'crd-windows': 'Tạo một máy ảo Windows và cài đặt Chrome Remote Desktop. Phù hợp để điều khiển máy ảo từ xa.',
@@ -370,6 +405,9 @@ document.addEventListener('DOMContentLoaded', () => {
     el.tokenHelpBtn.addEventListener('click', () => openModal(el.tokenHelpModal, el.tokenHelpModalOverlay));
     el.tokenHelpCloseBtn.addEventListener('click', () => closeModal(el.tokenHelpModal, el.tokenHelpModalOverlay));
     el.tokenHelpModalOverlay.addEventListener('click', () => closeModal(el.tokenHelpModal, el.tokenHelpModalOverlay));
+    el.generalHelpBtn.addEventListener('click', () => openModal(el.generalHelpModal, el.generalHelpModalOverlay));
+    el.generalHelpCloseBtn.addEventListener('click', () => closeModal(el.generalHelpModal, el.generalHelpModalOverlay));
+    el.generalHelpModalOverlay.addEventListener('click', () => closeModal(el.generalHelpModal, el.generalHelpModalOverlay));
 });
 </script>
 </body>
