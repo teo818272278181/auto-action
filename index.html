@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>App Deployment Runner</title>
-<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -43,7 +43,6 @@ input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
 .chevron-icon { transition: transform 0.3s ease; }
 .info-box { background-color: var(--info-bg); border-left: 4px solid var(--accent-color); padding: 0.75rem 1rem; border-radius: 0.25rem; font-size: 0.9rem; }
 code { background-color: rgba(128,128,128,0.2); color: var(--text-primary); padding: 2px 5px; border-radius: 4px; font-family: 'Courier New', Courier, monospace; }
-/* New Token Protection Style */
 .token-protected { transition: filter 0.2s ease; }
 .token-protected:not(:hover):not(:focus) { filter: blur(5px); }
 </style>
@@ -206,23 +205,16 @@ function getWorkflowContent(template, command, pin = "123456", repoUrl = '', wit
     }
 }
 
-// --- API Functions with ETag Caching ---
-// NOTE: This is the fastest possible method for a client-side app.
-// It tells GitHub to only send data if there are actual changes.
+// --- API Functions with ETag Caching (Fastest Client-Side Method) ---
 async function githubApi(endpoint, token, options = {}) {
     const url = `https://api.github.com${endpoint}`;
     const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers };
-    if ((options.method === 'GET' || !options.method) && apiCache[url]?.etag) {
-        headers['If-None-Match'] = apiCache[url].etag;
-    }
+    if ((options.method === 'GET' || !options.method) && apiCache[url]?.etag) { headers['If-None-Match'] = apiCache[url].etag; }
     const response = await fetch(url, { ...options, headers });
-    if (response.status === 304) { return apiCache[url].data; } // 304 Not Modified: Return cached data, ultra-fast.
+    if (response.status === 304) { return apiCache[url].data; }
     if (!response.ok) { const errorData = await response.json(); throw new Error(`Lỗi GitHub API (${response.status}): ${errorData.message || 'Lỗi không xác định'}`); }
     const data = response.status === 204 || response.status === 202 ? null : await response.json();
-    if (response.status === 200 && (options.method === 'GET' || !options.method)) {
-        const etag = response.headers.get('ETag');
-        if (etag) { apiCache[url] = { etag, data }; } // Update cache with new data and ETag.
-    }
+    if (response.status === 200 && (options.method === 'GET' || !options.method)) { const etag = response.headers.get('ETag'); if (etag) { apiCache[url] = { etag, data }; } }
     return data;
 }
 
@@ -230,26 +222,35 @@ const cancelWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/
 const rerunWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" });
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
 
-// --- Adaptive Polling Logic (Highest Speed via Caching) ---
+// --- Adaptive Polling Logic with Commit SHA Matching ---
 function stopPolling() { if (pollingTimeout) { clearTimeout(pollingTimeout); pollingTimeout = null; } }
 async function pollJobStatuses() {
     stopPolling();
-    const activeJobs = trackedJobs.filter(j => ['queued', 'in_progress'].includes(j.status));
-    if (activeJobs.length === 0) return;
+    const jobsToUpdate = trackedJobs.filter(j => ['awaiting_confirmation', 'queued', 'in_progress'].includes(j.status));
+    if (jobsToUpdate.length === 0) return;
 
     let changed = false;
     const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null);
-    if (!pollToken || !globalOwnerLogin) {
-        pollingTimeout = setTimeout(pollJobStatuses, 10000); // Retry later if no token/owner
-        return;
-    }
+    if (!pollToken || !globalOwnerLogin) { pollingTimeout = setTimeout(pollJobStatuses, 10000); return; }
 
     try {
         const { workflow_runs } = await githubApi(`/repos/${globalOwnerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?status=in_progress,queued&per_page=100`, pollToken, { method: 'GET' });
+        
+        const waitingJobsBySha = new Map(jobsToUpdate.filter(j => j.status === 'awaiting_confirmation').map(j => [j.commit_sha, j]));
         const activeRunIds = new Set(workflow_runs.map(run => run.id));
 
-        for (const job of activeJobs) {
-            if (job.id && !activeRunIds.has(job.id)) { // Job likely just finished, check its final status
+        for (const run of workflow_runs) {
+            if (waitingJobsBySha.has(run.head_sha)) {
+                const job = waitingJobsBySha.get(run.head_sha);
+                job.id = run.id; job.status = run.status; job.conclusion = run.conclusion; job.html_url = run.html_url; job.name = `#${run.run_number} - Build bởi ${job.owner}`;
+                delete job.commit_sha; // No longer needed
+                changed = true;
+                waitingJobsBySha.delete(run.head_sha);
+            }
+        }
+
+        for (const job of jobsToUpdate) {
+            if (job.id && ['queued', 'in_progress'].includes(job.status) && !activeRunIds.has(job.id)) {
                 try {
                     const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.id}`, job.token, { method: 'GET' });
                     if (finalRunData && (job.status !== finalRunData.status || job.conclusion !== finalRunData.conclusion)) {
@@ -257,35 +258,19 @@ async function pollJobStatuses() {
                         if (job.status === 'completed') { showDesktopNotification(`Job #${finalRunData.run_number} ${job.conclusion}`, `Deployment đã hoàn thành.`); }
                     }
                 } catch (err) { console.warn(`Không thể lấy trạng thái cuối cùng cho job ${job.id}:`, err); }
-            } else { // Job is still active or needs its ID assigned
-                const matchingRun = workflow_runs.find(run => (job.id && run.id === job.id) || (!job.id && run.actor.login === job.owner && Math.abs(new Date(job.startTime) - new Date(run.created_at)) < 60000));
-                if (matchingRun && (!job.id || job.status !== matchingRun.status || job.conclusion !== matchingRun.conclusion)) {
-                    job.id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url; job.name = `#${matchingRun.run_number} - Build bởi ${job.owner}`;
-                    changed = true;
-                }
             }
         }
     } catch (error) { showToast(`Lỗi polling: ${error.message}`, 'error'); }
 
     if (changed) { renderJobs(); saveState(); }
     const hasInProgress = trackedJobs.some(j => j.status === 'in_progress');
-    const interval = hasInProgress ? 4000 : 8000;
+    const interval = hasInProgress ? 3500 : 7000; // Slightly faster polling
     pollingTimeout = setTimeout(pollJobStatuses, interval);
 }
 function startPolling() { if (!pollingTimeout) { pollJobStatuses(); } }
 
 // --- UI, State, Modal Functions ---
-function updateUIForTemplate() { 
-    const isWindows = el.templateSelect.value === 'crd-windows'; 
-    el.crdOptions.classList.toggle('hidden', !isWindows); 
-    el.gitToolOptions.classList.toggle('hidden', isWindows); 
-    const showGitButtons = !isWindows;
-    el.run5Btn.classList.toggle('hidden', !showGitButtons);
-    el.run5WaitBtn.classList.toggle('hidden', !showGitButtons);
-    el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-1', !showGitButtons);
-    el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-3', showGitButtons);
-    el.templateDescription.textContent = templateDescriptions[el.templateSelect.value];
-}
+function updateUIForTemplate() { const isWindows = el.templateSelect.value === 'crd-windows'; el.crdOptions.classList.toggle('hidden', !isWindows); el.gitToolOptions.classList.toggle('hidden', isWindows); const showGitButtons = !isWindows; el.run5Btn.classList.toggle('hidden', !showGitButtons); el.run5WaitBtn.classList.toggle('hidden', !showGitButtons); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-1', !showGitButtons); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-3', showGitButtons); el.templateDescription.textContent = templateDescriptions[el.templateSelect.value]; }
 function showToast(message, type = 'info') { const container = document.getElementById('toast-container'); const toast = document.createElement('div'); const iconClass = { success: 'fa-check-circle', info: 'fa-info-circle', error: 'fa-exclamation-triangle' }[type]; toast.className = `toast toast-${type}`; toast.innerHTML = `<i class="fas ${iconClass} mr-3"></i><span>${message}</span>`; container.appendChild(toast); setTimeout(() => toast.classList.add('show'), 10); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 4000); }
 function saveState() { localStorage.setItem('trackedJobs', JSON.stringify(trackedJobs)); localStorage.setItem('appRunnerSettings', JSON.stringify({ tokens: el.tokenInput.value, pin: el.accessPinInput.value, globalOwner: globalOwnerLogin, template: el.templateSelect.value, tokenProtect: el.tokenProtectCheckbox.checked })); }
 function loadState() { const savedJobs = JSON.parse(localStorage.getItem('trackedJobs') || '[]'); trackedJobs = savedJobs.map(job => ({ ...job, startTime: new Date(job.startTime) })); const settings = JSON.parse(localStorage.getItem('appRunnerSettings') || '{}'); el.tokenInput.value = settings.tokens || ''; el.accessPinInput.value = settings.pin || ''; el.templateSelect.value = settings.template || 'crd-windows'; globalOwnerLogin = settings.globalOwner || ''; const isProtected = settings.tokenProtect || false; el.tokenProtectCheckbox.checked = isProtected; if (isProtected) { el.tokenInput.classList.add('token-protected'); } renderJobs(); startPolling(); }
@@ -302,10 +287,11 @@ function renderJobItem(job) {
         case 'in_progress': sClass = 'status-completed-success'; sIcon = 'fa-solid fa-gear fa-spin text-[var(--success-color)]'; sText = 'Job đang chạy'; break;
         case 'completed': if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]'; sText = 'Thành công'; } else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]'; sText = job.conclusion || 'Thất bại'; } break;
         case 'error': sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation text-[var(--warning-color)]'; sText = 'Lỗi'; break;
+        case 'awaiting_confirmation': sClass = 'status-queued'; sIcon = 'fa-solid fa-satellite-dish fa-spin'; sText = 'Đang xác nhận'; break;
         default: sClass = 'status-queued'; sIcon = 'fa-solid fa-clock fa-spin-pulse'; sText = 'Đang chờ'; break;
     }
     if (job.id) {
-        if (job.status === 'in_progress' || job.status === 'queued') { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Hủy Job"><i class="fas fa-stop"></i></button>`; }
+        if (['in_progress', 'queued', 'awaiting_confirmation'].includes(job.status)) { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Hủy Job"><i class="fas fa-stop"></i></button>`; }
         if (job.status === 'completed') { actions += `<button data-job-temp-id="${job.tempId}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Chạy lại"><i class="fas fa-redo"></i></button>`; }
         if (job.html_url) { actions += `<a href="${job.html_url}" target="_blank" class="px-2 py-1 text-xs rounded bg-gray-600 text-white" title="Xem trên GitHub"><i class="fab fa-github"></i></a>`; }
     }
@@ -317,9 +303,9 @@ function renderJobs() {
     const jobsByOwner = trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {});
     for (const owner in jobsByOwner) {
         let ownerGroup = el.jobListContainer.querySelector(`.owner-group[data-owner="${owner}"]`);
-        if (!ownerGroup) { const isExpanded = jobsByOwner[owner].some(j => ['queued', 'in_progress'].includes(j.status)); ownerGroup = document.createElement('div'); ownerGroup.className = 'owner-group card rounded-lg overflow-hidden'; ownerGroup.dataset.owner = owner; ownerGroup.innerHTML = `<div class="owner-header p-4 flex justify-between items-center" data-owner="${owner}"><div class="font-bold text-lg">${owner}</div><div class="flex items-center gap-4"><span class="active-count bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full"></span><span class="total-count bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full"></span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}"></div>`; el.jobListContainer.appendChild(ownerGroup); }
+        if (!ownerGroup) { const isExpanded = jobsByOwner[owner].some(j => ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)); ownerGroup = document.createElement('div'); ownerGroup.className = 'owner-group card rounded-lg overflow-hidden'; ownerGroup.dataset.owner = owner; ownerGroup.innerHTML = `<div class="owner-header p-4 flex justify-between items-center" data-owner="${owner}"><div class="font-bold text-lg">${owner}</div><div class="flex items-center gap-4"><span class="active-count bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full"></span><span class="total-count bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full"></span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}"></div>`; el.jobListContainer.appendChild(ownerGroup); }
         const jobs = jobsByOwner[owner].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
-        const activeJobCount = jobs.filter(j => ['queued', 'in_progress'].includes(j.status)).length;
+        const activeJobCount = jobs.filter(j => ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)).length;
         ownerGroup.querySelector('.active-count').textContent = `${activeJobCount} Hoạt động`; ownerGroup.querySelector('.active-count').classList.toggle('hidden', activeJobCount === 0); ownerGroup.querySelector('.total-count').textContent = `${jobs.length} Tổng cộng`;
         const jobsContent = ownerGroup.querySelector('.owner-jobs-content'); const existingJobIds = new Set([...jobsContent.children].map(el => el.dataset.jobTempId)); const currentJobIds = new Set(jobs.map(j => j.tempId));
         existingJobIds.forEach(id => { if (!currentJobIds.has(id)) jobsContent.querySelector(`[data-job-temp-id="${id}"]`)?.remove(); });
@@ -332,15 +318,23 @@ function renderJobs() {
 async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl, withRerun) {
     let owner;
     try { const user = await githubApi("/user", token); owner = user.login; if (!globalOwnerLogin) { globalOwnerLogin = owner; saveState(); } } catch (e) { showToast(`Token không hợp lệ. ${e.message}`, 'error'); throw e; }
-    const job = { tempId: `job-${Date.now()}-${Math.random()}`, id: null, status: 'queued', conclusion: null, startTime: new Date(), html_url: null, name: `Đang khởi tạo...`, command: deployCmd, owner, token, errorMessage: null };
+    
+    // Create a temporary job object first, without the commit SHA
+    const job = { tempId: `job-${Date.now()}-${Math.random()}`, id: null, status: 'awaiting_confirmation', conclusion: null, startTime: new Date(), html_url: null, name: `Đang chờ xác nhận...`, command: deployCmd, owner, token, errorMessage: null, commit_sha: null };
     trackedJobs.unshift(job); renderJobs(); saveState();
+    
     try {
         await githubApi(`/repos/${owner}/${REPO_NAME}`, token, { method: 'GET' }).catch(async (e) => { if (e.message.includes("404")) { await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info'); } else throw e; });
         const path = `.github/workflows/${WORKFLOW_NAME}`; const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun); const base64Content = btoa(unescape(encodeURIComponent(content))); const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`; let fileSha = null;
         try { fileSha = (await githubApi(url, token, { method: 'GET' })).sha; } catch (e) { if (!e.message.includes("404")) throw e; }
-        await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Deploying build`, content: base64Content, sha: fileSha || undefined }) });
+        
+        // This is the crucial step: get the commit SHA from the file update response
+        const commitResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Deploying build via runner`, content: base64Content, sha: fileSha || undefined }) });
+        job.commit_sha = commitResponse.commit.sha; // Assign the unique SHA to our job object
+
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
-        showToast(`Đã kích hoạt build cho user: ${owner}`, "success"); startPolling();
+        showToast(`Đã kích hoạt build cho user: ${owner}`, "success");
+        startPolling(); // Start polling immediately
     } catch (e) { job.status = 'error'; job.errorMessage = e.message; renderJobs(); saveState(); showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error'); throw e; }
 }
 
@@ -363,7 +357,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const ownerData = ownersData[i]; const token = tokens[i];
             if (!ownerData) { showToast(`Token #${i + 1} không hợp lệ, bỏ qua.`, "warning"); continue; }
             const owner = ownerData.login;
-            const activeJobsForToken = trackedJobs.filter(j => j.owner === owner && ['queued', 'in_progress'].includes(j.status)).length;
+            const activeJobsForToken = trackedJobs.filter(j => j.owner === owner && ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)).length;
             const jobsToCreate = Math.max(0, Math.min(runsPerToken, MAX_JOBS_PER_TOKEN - activeJobsForToken));
             if (jobsToCreate < runsPerToken) { showToast(`Token của ${owner} chỉ có thể tạo thêm ${jobsToCreate} job.`, 'info'); }
             for (let j = 0; j < jobsToCreate; j++) { const promise = new Promise(resolve => setTimeout(resolve, j * 150 + i * 50)).then(() => triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun)); dispatchPromises.push(promise); }
@@ -398,13 +392,8 @@ document.addEventListener('DOMContentLoaded', () => {
     el.templateSelect.addEventListener('change', updateUIForTemplate);
     [el.tokenInput, el.accessPinInput, el.templateSelect].forEach(input => input.addEventListener('change', saveState));
     
-    // Token Protection Listener
-    el.tokenProtectCheckbox.addEventListener('change', () => {
-        el.tokenInput.classList.toggle('token-protected', el.tokenProtectCheckbox.checked);
-        saveState();
-    });
+    el.tokenProtectCheckbox.addEventListener('change', () => { el.tokenInput.classList.toggle('token-protected', el.tokenProtectCheckbox.checked); saveState(); });
 
-    // Modal Listeners
     el.modalCloseBtn.addEventListener('click', () => closeModal(el.modal, el.modalOverlay));
     el.modalOverlay.addEventListener('click', () => closeModal(el.modal, el.modalOverlay));
     el.tokenHelpBtn.addEventListener('click', () => openModal(el.tokenHelpModal, el.tokenHelpModalOverlay));
