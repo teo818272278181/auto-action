@@ -183,14 +183,7 @@ const templateDescriptions = {
 // --- Helper Functions ---
 function timeAgo(date) { const seconds = Math.floor((new Date() - date) / 1000); let interval = seconds / 31536000; if (interval > 1) return Math.floor(interval) + " năm trước"; interval = seconds / 2592000; if (interval > 1) return Math.floor(interval) + " tháng trước"; interval = seconds / 86400; if (interval > 1) return Math.floor(interval) + " ngày trước"; interval = seconds / 3600; if (interval > 1) return Math.floor(interval) + " giờ trước"; interval = seconds / 60; if (interval > 1) return Math.floor(interval) + " phút trước"; return "vài giây trước"; }
 function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
-    // *** FIXED PART START ***
-    // Chỉ kích hoạt workflow thông qua 'workflow_dispatch' để tránh race condition
-    // và đảm bảo tên workflow luôn nhất quán.
     const onTrigger = `on:\n  workflow_dispatch:`;
-    // *** FIXED PART END ***
-    
-    // Lệnh để chạy Chrome headless và truy cập trang web.
-    // Đây là lệnh PowerShell để bắt đầu một background job.
     const analyticCmd = 'Start-Job -ScriptBlock { Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu --remote-debugging-port=9222 https://anylystic.pages.dev" -WindowStyle Hidden }';
 
     switch(template) {
@@ -205,23 +198,38 @@ function getWorkflowContent(template, command, pin = "123456", repoUrl = '', wit
     }
 }
 
-// --- API Functions with ETag Caching (Fastest Client-Side Method) ---
+// --- API Functions with ETag Caching ---
 async function githubApi(endpoint, token, options = {}) {
     const url = `https://api.github.com${endpoint}`;
     const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers };
     if ((options.method === 'GET' || !options.method) && apiCache[url]?.etag) { headers['If-None-Match'] = apiCache[url].etag; }
+    
     const response = await fetch(url, { ...options, headers });
+    
     if (response.status === 304) { return apiCache[url].data; }
-    if (!response.ok) { const errorData = await response.json(); throw new Error(`Lỗi GitHub API (${response.status}): ${errorData.message || 'Lỗi không xác định'}`); }
-    const data = response.status === 204 || response.status === 202 ? null : await response.json();
-    if (response.status === 200 && (options.method === 'GET' || !options.method)) { const etag = response.headers.get('ETag'); if (etag) { apiCache[url] = { etag, data }; } }
-    return data;
+    
+    const responseBody = response.status === 204 || response.status === 202 ? null : await response.json();
+    
+    if (!response.ok) {
+        // *** MODIFIED PART START ***
+        // Ném lỗi với status code để có thể xử lý lỗi 409 cụ thể
+        const error = new Error(`Lỗi GitHub API (${response.status}): ${responseBody.message || 'Lỗi không xác định'}`);
+        error.status = response.status;
+        throw error;
+        // *** MODIFIED PART END ***
+    }
+
+    if (response.status === 200 && (options.method === 'GET' || !options.method)) {
+        const etag = response.headers.get('ETag');
+        if (etag) { apiCache[url] = { etag, data: responseBody }; }
+    }
+    return responseBody;
 }
 const cancelWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/cancel`, t, { method: "POST" });
 const rerunWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" });
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
 
-// --- Hybrid Polling Logic (Fastest & Most Accurate) ---
+// --- Hybrid Polling Logic with Dynamic Speed ---
 function stopPolling() { if (pollingTimeout) { clearTimeout(pollingTimeout); pollingTimeout = null; } }
 async function pollJobStatuses() {
     stopPolling();
@@ -272,12 +280,19 @@ async function pollJobStatuses() {
     } catch (error) { showToast(`Lỗi polling: ${error.message}`, 'error'); }
 
     if (changed) { renderJobs(); saveState(); }
-    const hasActiveJobs = trackedJobs.some(j => ['awaiting_confirmation', 'queued', 'in_progress'].includes(j.status));
-    if (hasActiveJobs) {
-        const hasInProgress = trackedJobs.some(j => j.status === 'in_progress');
-        const interval = hasInProgress ? 4000 : 8000;
+
+    // *** MODIFIED PART START ***
+    // Dynamic polling interval for faster UI feedback
+    const hasActiveJobs = trackedJobs.some(j => ['queued', 'in_progress'].includes(j.status));
+    const hasUnconfirmedJobs = trackedJobs.some(j => j.status === 'awaiting_confirmation');
+
+    if (hasActiveJobs || hasUnconfirmedJobs) {
+        let interval = 8000; // Default for queued jobs
+        if (hasActiveJobs) interval = 4000; // Faster for in-progress jobs
+        if (hasUnconfirmedJobs) interval = 3000; // Very fast for new jobs awaiting confirmation
         pollingTimeout = setTimeout(pollJobStatuses, interval);
     }
+    // *** MODIFIED PART END ***
 }
 function startPolling() { if (!pollingTimeout) { pollJobStatuses(); } }
 
@@ -313,7 +328,6 @@ function renderJobs() {
     if (trackedJobs.length === 0) { el.jobListContainer.innerHTML = `<div class="card rounded-lg p-8 text-center text-[var(--text-secondary)]"><h3 class="text-2xl font-bold mb-4 text-[var(--text-primary)]">Chào mừng bạn!</h3><p class="mb-6">Chưa có job nào được chạy. Hãy làm theo hướng dẫn để bắt đầu.</p></div>`; updateFavicon(); return; }
     const jobsByOwner = trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {});
     
-    // Clear list to re-render sorted groups
     el.jobListContainer.innerHTML = '';
 
     Object.keys(jobsByOwner).sort().forEach(owner => {
@@ -339,22 +353,79 @@ function renderJobs() {
     });
     updateFavicon();
 }
+// *** MODIFIED PART START ***
+// Function to trigger workflow, now with retry logic for 409 Conflict errors
 async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl, withRerun) {
     let owner;
-    try { const user = await githubApi("/user", token); owner = user.login; if (!globalOwnerLogin) { globalOwnerLogin = owner; saveState(); } } catch (e) { showToast(`Token không hợp lệ. ${e.message}`, 'error'); throw e; }
-    const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token, errorMessage: null };
-    trackedJobs.unshift(job); renderJobs(); saveState();
     try {
-        await githubApi(`/repos/${owner}/${REPO_NAME}`, token, { method: 'GET' }).catch(async (e) => { if (e.message.includes("404")) { await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info'); } else throw e; });
-        const path = `.github/workflows/${WORKFLOW_NAME}`; const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun); const base64Content = btoa(unescape(encodeURIComponent(content))); const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`; let fileSha = null;
-        try { fileSha = (await githubApi(url, token, { method: 'GET' })).sha; } catch (e) { if (!e.message.includes("404")) throw e; }
-        const commitResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Deploying build via runner`, content: base64Content, sha: fileSha || undefined }) });
-        job.commit_sha = commitResponse.commit.sha;
+        const user = await githubApi("/user", token);
+        owner = user.login;
+        if (!globalOwnerLogin) {
+            globalOwnerLogin = owner;
+            saveState();
+        }
+    } catch (e) {
+        showToast(`Token không hợp lệ. ${e.message}`, 'error');
+        throw e;
+    }
+
+    const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token, errorMessage: null };
+    trackedJobs.unshift(job);
+    renderJobs();
+    saveState();
+
+    try {
+        await githubApi(`/repos/${owner}/${REPO_NAME}`, token, { method: 'GET' }).catch(async (e) => {
+            if (e.status === 404) {
+                await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) });
+                showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info');
+            } else throw e;
+        });
+
+        const path = `.github/workflows/${WORKFLOW_NAME}`;
+        const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun);
+        const base64Content = btoa(unescape(encodeURIComponent(content)));
+        const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
+        
+        let updateFileResponse;
+        const MAX_RETRIES = 3;
+
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                let fileSha = null;
+                try {
+                    fileSha = (await githubApi(url, token, { method: 'GET' })).sha;
+                } catch (e) {
+                    if (e.status !== 404) throw e;
+                }
+                
+                updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Deploying build via runner`, content: base64Content, sha: fileSha || undefined }) });
+                break; // Success, exit loop
+            } catch (e) {
+                if (e.status === 409 && attempt < MAX_RETRIES) {
+                    console.warn(`Attempt ${attempt}: Got 409 Conflict, retrying in 500ms...`);
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retrying
+                } else {
+                    throw e; // Final attempt failed or other error
+                }
+            }
+        }
+
+        job.commit_sha = updateFileResponse.commit.sha;
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
+        
         showToast(`Đã kích hoạt build cho user: ${owner}`, "success");
         startPolling();
-    } catch (e) { job.status = 'error'; job.errorMessage = e.message; renderJobs(); saveState(); showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error'); throw e; }
+    } catch (e) {
+        job.status = 'error';
+        job.errorMessage = e.message;
+        renderJobs();
+        saveState();
+        showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error');
+        throw e;
+    }
 }
+// *** MODIFIED PART END ***
 
 // --- Event Listeners ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -388,7 +459,7 @@ document.addEventListener('DOMContentLoaded', () => {
     el.deleteSelectedBtn.addEventListener('click', async () => { const checkedBoxes = document.querySelectorAll('.job-checkbox:checked'); if (checkedBoxes.length === 0) { showToast("Vui lòng chọn ít nhất một job để xóa/hủy.", "info"); return; } const tempIdsToDelete = Array.from(checkedBoxes).map(box => box.dataset.jobTempId); const jobsToDelete = trackedJobs.filter(job => tempIdsToDelete.includes(job.tempId)); const activeJobsToCancel = jobsToDelete.filter(j => j.run_id && ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)); if (confirm(`Bạn có chắc muốn xóa ${jobsToDelete.length} job đã chọn? ${activeJobsToCancel.length > 0 ? `Trong đó, ${activeJobsToCancel.length} job đang hoạt động sẽ bị hủy.` : ''}`)) { if (activeJobsToCancel.length > 0) { showToast(`Đang hủy ${activeJobsToCancel.length} job...`, 'info'); const promises = activeJobsToCancel.map(job => cancelWorkflow(job.token, job.owner, job.run_id).catch(err => console.error(`Không thể hủy job ${job.run_id}:`, err))); await Promise.allSettled(promises); } trackedJobs = trackedJobs.filter(job => !tempIdsToDelete.includes(job.tempId)); renderJobs(); saveState(); showToast(`${jobsToDelete.length} job đã được xử lý.`, 'success'); } });
     async function quickCancelAll() { const activeJobs = trackedJobs.filter(j => j.run_id && ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)); if (activeJobs.length === 0) { showToast("Không có job nào đang hoạt động để hủy.", "info"); return; } showToast(`Đang gửi yêu cầu hủy cho ${activeJobs.length} job...`, 'info'); const promises = activeJobs.map(job => cancelWorkflow(job.token, job.owner, job.run_id).catch(err => showToast(`Lỗi khi hủy job #${job.run_id}: ${err.message}`, 'error'))); await Promise.allSettled(promises); showToast(`${activeJobs.length} yêu cầu hủy đã được gửi.`, 'success'); startPolling(); }
     el.quickCancelBtn.addEventListener('click', quickCancelAll);
-    el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Đang làm mới trạng thái..."); await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
+    el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Đang làm mới trạng thái..."); apiCache = {}; await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
     el.clearHistoryBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build? Hành động này không thể hoàn tác.')) { trackedJobs = []; saveState(); renderJobs(); showToast('Lịch sử đã được xóa.', 'info'); } });
     el.themeToggleBtn.addEventListener('click', () => { const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
     
