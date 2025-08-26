@@ -266,7 +266,7 @@ async function githubApi(endpoint, token, options = {}) {
 }
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
 
-// --- *** NEW: Unified & Robust Polling Logic ***
+// --- *** NEW: Direct & Robust Polling Logic ***
 async function pollJobStatuses() {
     stopPolling();
     const jobsToUpdate = trackedJobs.filter(j => !['completed', 'error'].includes(j.status));
@@ -276,6 +276,7 @@ async function pollJobStatuses() {
     const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null);
     if (!pollToken) { pollingTimeout = setTimeout(pollJobStatuses, 10000); return; }
     
+    // Safety timeout for jobs stuck in awaiting_confirmation
     const now = new Date();
     trackedJobs.forEach(job => {
         if (job.status === 'awaiting_confirmation' && (now - new Date(job.startTime)) > 3 * 60 * 1000) { // 3 minute timeout
@@ -284,63 +285,70 @@ async function pollJobStatuses() {
         }
     });
 
+    // Group all active jobs by owner to make one API call per owner
     const jobsByOwner = jobsToUpdate.reduce((acc, job) => {
-        if (!acc[job.owner]) { acc[job.owner] = { jobs: [], oldestStartTime: job.startTime }; }
-        if (job.startTime < acc[job.owner].oldestStartTime) { acc[job.owner].oldestStartTime = job.startTime; }
-        acc[job.owner].jobs.push(job);
+        if (!acc[job.owner]) { acc[job.owner] = []; }
+        acc[job.owner].push(job);
         return acc;
     }, {});
 
-    for (const owner in jobsByOwner) {
+    // Process each owner's jobs
+    const promises = Object.keys(jobsByOwner).map(async (owner) => {
+        const ownerJobs = jobsByOwner[owner];
+        const awaitingJobs = ownerJobs.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
+        const monitoringJobs = ownerJobs.filter(j => j.run_id);
+        
         try {
-            const searchDate = new Date(new Date(jobsByOwner[owner].oldestStartTime) - 15000).toISOString();
+            // Fetch runs once for the owner
+            const oldestStartTime = ownerJobs.reduce((oldest, job) => new Date(job.startTime) < oldest ? new Date(job.startTime) : oldest, new Date());
+            const searchDate = new Date(oldestStartTime - 30000).toISOString(); // Look 30s before the first job
             const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?created:>=${searchDate}&per_page=100`, pollToken);
-            
-            const runsById = new Map(workflow_runs.map(run => [run.id, run]));
-            const runsBySha = workflow_runs.reduce((acc, run) => {
-                if (!acc[run.head_sha]) acc[run.head_sha] = [];
-                acc[run.head_sha].push(run);
-                return acc;
-            }, {});
+
+            const runsBySha = new Map();
+            workflow_runs.forEach(run => {
+                if (!runsBySha.has(run.head_sha)) runsBySha.set(run.head_sha, []);
+                runsBySha.get(run.head_sha).push(run);
+            });
             const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
 
-            for (const job of jobsByOwner[owner].jobs) {
-                // Step 1: Confirm job if it's awaiting
-                if (job.status === 'awaiting_confirmation' && job.commit_sha) {
-                    if (runsBySha[job.commit_sha] && runsBySha[job.commit_sha].length > 0) {
-                        const matchingRun = runsBySha[job.commit_sha].find(r => !knownRunIds.has(r.id)) || runsBySha[job.commit_sha].shift();
-                        if(matchingRun) {
-                            job.run_id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url;
-                            job.name = `#${matchingRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
-                            knownRunIds.add(job.run_id); // Mark as known immediately
-                        }
-                    }
-                }
-                // Step 2: Monitor or finalize job if it has a run_id
-                if (job.run_id) {
-                    const remoteRun = runsById.get(job.run_id);
-                    if (remoteRun && remoteRun.status !== 'completed') {
-                         if (job.status !== remoteRun.status) { job.status = remoteRun.status; changed = true; }
-                    } else { // Run is completed or not in the active list, get its final state
-                        try {
-                            const { jobs: jobSteps } = await getJobDetails(job.token, job.owner, job.run_id);
-                            if (jobSteps && jobSteps.length > 0 && jobSteps[0].conclusion) {
-                                job.status = 'completed'; job.conclusion = jobSteps[0].conclusion;
-                            } else {
-                                const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
-                                job.status = 'completed'; job.conclusion = finalRunData.conclusion || 'failure';
-                            }
-                        } catch (err) {
-                            job.status = 'completed'; job.conclusion = err.status === 404 ? 'failure' : 'unknown';
-                        }
-                        changed = true;
+            // 1. Confirm awaiting jobs
+            for (const job of awaitingJobs) {
+                const potentialRuns = runsBySha.get(job.commit_sha);
+                if (potentialRuns) {
+                    const newRun = potentialRuns.find(r => !knownRunIds.has(r.id));
+                    if (newRun) {
+                        job.run_id = newRun.id; job.status = newRun.status; job.conclusion = newRun.conclusion; job.html_url = newRun.html_url;
+                        job.name = `#${newRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
+                        knownRunIds.add(newRun.id); // Mark as known to prevent re-matching
                     }
                 }
             }
-        } catch (e) { console.error(`Polling error for owner ${owner}:`, e); }
-    }
+            
+            // 2. Monitor and Finalize jobs with run_id
+            for (const job of monitoringJobs) {
+                const remoteRun = workflow_runs.find(r => r.id === job.run_id);
+                if (remoteRun) { // Run is still active or recently completed
+                     if (job.status !== remoteRun.status || job.conclusion !== remoteRun.conclusion) {
+                        job.status = remoteRun.status; job.conclusion = remoteRun.conclusion; changed = true;
+                    }
+                } else { // Run not in the list, it must be completed
+                    try {
+                        const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
+                        job.status = finalRunData.status; job.conclusion = finalRunData.conclusion; changed = true;
+                    } catch (err) {
+                        job.status = 'completed'; job.conclusion = 'failure'; changed = true; // Assume failure if run is gone (e.g., deleted)
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(`Polling error for owner ${owner}:`, e);
+        }
+    });
+
+    await Promise.allSettled(promises);
 
     if (changed) { renderJobs(); saveState(); }
+
     const hasActiveJobs = trackedJobs.some(j => !['completed', 'error'].includes(j.status));
     if (hasActiveJobs) {
         let interval = trackedJobs.some(j => j.status === 'awaiting_confirmation') ? 2000 : 5000;
@@ -359,20 +367,49 @@ function openModal(modalEl, overlayEl) { overlayEl.classList.add('show'); modalE
 function closeModal(modalEl, overlayEl) { overlayEl.classList.remove('show'); modalEl.classList.remove('show'); }
 async function showJobDetails(job) { el.modalTitle.textContent = `Chi tiết cho ${job.name}`; el.modalContent.innerHTML = `<div class="text-center"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`; openModal(el.modal, el.modalOverlay); try { const { jobs } = await getJobDetails(job.token, job.owner, job.run_id); const detailsHtml = jobs[0].steps.map(step => { const duration = step.completed_at ? (new Date(step.completed_at) - new Date(step.started_at)) : 0; const seconds = Math.floor((duration / 1000) % 60).toString().padStart(2, '0'); const minutes = Math.floor((duration / (1000 * 60)) % 60); let icon = 'fa-clock'; let color = 'text-[var(--text-secondary)]'; if (step.status === 'completed') { icon = step.conclusion === 'success' ? 'fa-check-circle' : 'fa-times-circle'; color = step.conclusion === 'success' ? 'text-[var(--success-color)]' : 'text-[var(--error-color)]'; } return `<div class="flex items-center justify-between py-2 border-b border-[var(--border-color)]"> <div class="flex items-center gap-3"><i class="fas ${icon} ${color}"></i><span>${step.name}</span></div> <div class="text-sm text-[var(--text-secondary)]">${minutes}m ${seconds}s</div> </div>`; }).join(''); el.modalContent.innerHTML = detailsHtml || '<div class="text-center text-[var(--text-secondary)]">Không có chi tiết các bước.</div>'; } catch (e) { el.modalContent.innerHTML = `<div class="text-[var(--error-color)]">Không thể tải chi tiết job: ${e.message}</div>`; } }
 
-// --- Main Rendering ---
+// --- *** NEW: Enhanced Rendering based on Conclusion ***
 function renderJobItem(job) {
-    let sClass, sIcon, sText;
+    let sClass = 'status-queued', sIcon = 'fa-solid fa-clock fa-spin-pulse', sText = 'Đang chờ';
     const conclusionText = (job.conclusion || '').replace(/_/g, ' ');
+
     switch(job.status) {
-        case 'in_progress': sClass = 'status-running'; sIcon = 'fa-solid fa-gear fa-spin text-[var(--success-color)]'; sText = 'Job đang chạy'; break;
-        case 'completed': 
-            if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]'; sText = 'Thành công'; } 
-            else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]'; sText = conclusionText.toUpperCase() || 'THẤT BẠI'; } 
+        case 'in_progress':
+            sClass = 'status-running'; sIcon = 'fa-solid fa-gear fa-spin text-[var(--success-color)]'; sText = 'Job đang chạy'; 
             break;
-        case 'error': sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation text-[var(--warning-color)]'; sText = 'Lỗi'; break;
-        case 'awaiting_confirmation': sClass = 'status-queued'; sIcon = 'fa-solid fa-satellite-dish fa-spin'; sText = 'Đang xác nhận'; break;
-        default: sClass = 'status-queued'; sIcon = 'fa-solid fa-clock fa-spin-pulse'; sText = job.status.replace(/_/g, ' ').toUpperCase() || 'ĐANG CHỜ'; break;
+        case 'queued':
+        case 'waiting':
+             sClass = 'status-queued'; sIcon = 'fa-solid fa-clock text-gray-400'; sText = 'Đang chờ'; 
+             break;
+        case 'completed':
+            switch(job.conclusion) {
+                case 'success':
+                    sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]'; sText = 'Thành công';
+                    break;
+                case 'failure':
+                    sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]'; sText = 'Thất bại';
+                    break;
+                case 'cancelled':
+                    sClass = 'status-error'; sIcon = 'fa-solid fa-ban text-[var(--warning-color)]'; sText = 'Đã hủy';
+                    break;
+                case 'timed_out':
+                    sClass = 'status-error'; sIcon = 'fa-solid fa-hourglass-end text-[var(--warning-color)]'; sText = 'Hết giờ';
+                    break;
+                case 'skipped':
+                    sClass = 'status-queued'; sIcon = 'fa-solid fa-forward text-gray-400'; sText = 'Đã bỏ qua';
+                    break;
+                default:
+                    sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-question-circle text-[var(--error-color)]'; sText = conclusionText || 'Không xác định';
+                    break;
+            }
+            break;
+        case 'error': 
+            sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation text-[var(--warning-color)]'; sText = 'Lỗi'; 
+            break;
+        case 'awaiting_confirmation': 
+            sClass = 'status-queued'; sIcon = 'fa-solid fa-satellite-dish fa-spin'; sText = 'Đang xác nhận'; 
+            break;
     }
+
     let actions = '';
     if (job.run_id) {
         if (!['completed', 'error'].includes(job.status)) { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Hủy Job"><i class="fas fa-stop"></i></button>`; }
@@ -381,6 +418,7 @@ function renderJobItem(job) {
     }
     return `<div class="flex justify-between items-center"><div class="flex items-center gap-3 overflow-hidden"><input type="checkbox" class="job-checkbox flex-shrink-0" data-job-temp-id="${job.tempId}"><i class="${sIcon} text-xl w-6 text-center"></i><div class="overflow-hidden"><span class="font-semibold text-md truncate">${job.name}</span><div class="text-xs text-[var(--text-secondary)]" title="${new Date(job.startTime).toLocaleString()}">${timeAgo(new Date(job.startTime))}</div></div></div><div class="flex items-center gap-2 flex-shrink-0"><div class="status-badge ${sClass}">${sText}</div><div class="actions flex gap-1">${actions}</div></div></div>`;
 }
+
 function renderJobs() {
     if (trackedJobs.length === 0) { el.jobListContainer.innerHTML = `<div class="card rounded-lg p-8 text-center text-[var(--text-secondary)]"><h3 class="text-2xl font-bold mb-4 text-[var(--text-primary)]">Chào mừng bạn!</h3><p class="mb-6">Chưa có job nào được chạy. Hãy làm theo hướng dẫn để bắt đầu.</p></div>`; updateFavicon(); return; }
     const jobsByOwner = trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {});
