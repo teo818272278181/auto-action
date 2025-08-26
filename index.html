@@ -278,42 +278,36 @@ async function pollJobStatuses() {
     if (!pollToken) { pollingTimeout = setTimeout(pollJobStatuses, 10000); return; }
 
     try {
+        const now = new Date();
+        // *** NEW: Add timeout for jobs stuck in awaiting_confirmation ***
+        trackedJobs.forEach(job => {
+            if (job.status === 'awaiting_confirmation' && (now - new Date(job.startTime)) > 3 * 60 * 1000) { // 3 minute timeout
+                job.status = 'error';
+                job.name = 'Lỗi (Timeout)';
+                job.errorMessage = 'Không tìm thấy workflow run tương ứng sau 3 phút.';
+                changed = true;
+            }
+        });
+
         const jobsToConfirm = jobsToUpdate.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
         if (jobsToConfirm.length > 0) {
-            const jobsByOwner = jobsToConfirm.reduce((acc, job) => {
-                if (!acc[job.owner]) acc[job.owner] = [];
-                acc[job.owner].push(job);
-                return acc;
-            }, {});
+            const jobsByOwner = jobsToConfirm.reduce((acc, job) => { if (!acc[job.owner]) acc[job.owner] = []; acc[job.owner].push(job); return acc; }, {});
 
             for (const owner in jobsByOwner) {
                 try {
-                    // *** FIX: Only fetch active runs to avoid matching with cancelled/failed runs ***
                     const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?status=queued,in_progress,waiting&per_page=30`, pollToken);
                     const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
                     const newRuns = workflow_runs.filter(run => !knownRunIds.has(run.id) && run.actor.login === owner);
-
-                    const newRunsBySha = newRuns.reduce((acc, run) => {
-                        if (!acc[run.head_sha]) acc[run.head_sha] = [];
-                        acc[run.head_sha].push(run);
-                        return acc;
-                    }, {});
+                    const newRunsBySha = newRuns.reduce((acc, run) => { if (!acc[run.head_sha]) acc[run.head_sha] = []; acc[run.head_sha].push(run); return acc; }, {});
 
                     for (const job of jobsByOwner[owner]) {
                         if (newRunsBySha[job.commit_sha] && newRunsBySha[job.commit_sha].length > 0) {
                             const matchingRun = newRunsBySha[job.commit_sha].shift();
-                            job.run_id = matchingRun.id;
-                            job.status = matchingRun.status;
-                            job.conclusion = matchingRun.conclusion;
-                            job.html_url = matchingRun.html_url;
-                            job.name = `#${matchingRun.run_number} - Build bởi ${job.owner}`;
-                            delete job.commit_sha;
-                            changed = true;
+                            job.run_id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url;
+                            job.name = `#${matchingRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
                         }
                     }
-                } catch (e) {
-                    console.error(`Failed to poll runs for owner ${owner}:`, e);
-                }
+                } catch (e) { console.error(`Failed to poll runs for owner ${owner}:`, e); }
             }
         }
 
@@ -327,22 +321,26 @@ async function pollJobStatuses() {
                     
                     for (const job of monitorByOwner[owner]) {
                         const activeRun = activeRunMap.get(job.run_id);
-                        if (activeRun) {
-                            if (job.status !== activeRun.status) { job.status = activeRun.status; changed = true; }
-                        } else {
-                             try {
-                                const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
-                                if (finalRunData && (job.status !== finalRunData.status || job.conclusion !== finalRunData.conclusion)) {
-                                    job.status = finalRunData.status; 
-                                    job.conclusion = finalRunData.conclusion || 'unknown'; // Ensure conclusion is set
-                                    changed = true;
+                        if (activeRun) { if (job.status !== activeRun.status) { job.status = activeRun.status; changed = true; } } 
+                        else {
+                            // *** NEW: Two-layer approach to get final status ***
+                            try {
+                                // Layer 1: Attempt to get the job's conclusion (most reliable)
+                                const { jobs } = await getJobDetails(job.token, job.owner, job.run_id);
+                                if (jobs && jobs.length > 0 && jobs[0].conclusion) {
+                                    job.status = 'completed';
+                                    job.conclusion = jobs[0].conclusion;
+                                } else {
+                                    // Layer 2: Fallback to the run's conclusion
+                                    const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
+                                    job.status = 'completed';
+                                    job.conclusion = finalRunData.conclusion || 'failure'; // Default to failure if conclusion is null
                                 }
-                            } catch (err) { 
-                                console.warn(`Không thể lấy trạng thái cuối cùng cho job ${job.run_id}:`, err); 
-                                job.status = 'completed'; 
-                                job.conclusion = err.status === 404 ? 'failure' : 'unknown'; // Be more specific on 404
-                                changed = true; 
+                            } catch (err) {
+                                job.status = 'completed';
+                                job.conclusion = err.status === 404 ? 'failure' : 'unknown'; // Mark as failure if deleted
                             }
+                            changed = true;
                         }
                     }
                 } catch(e) { console.error(`Failed to monitor runs for owner ${owner}:`, e); }
@@ -351,9 +349,7 @@ async function pollJobStatuses() {
     } catch (error) { showToast(`Lỗi polling: ${error.message}`, 'error'); }
 
     if (changed) { renderJobs(); saveState(); }
-    
     const hasActiveJobs = trackedJobs.some(j => ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status));
-
     if (hasActiveJobs) {
         let interval = hasActiveJobs ? (trackedJobs.some(j => j.status === 'awaiting_confirmation') ? 3000 : 5000) : 8000;
         pollingTimeout = setTimeout(pollJobStatuses, interval);
@@ -426,7 +422,7 @@ function renderJobs() {
 // --- Action Queue System ---
 async function processActionQueue() {
     if (isProcessingQueue || actionQueue.length === 0) {
-        if (!isProcessingQueue) { // Re-enable buttons if queue is truly empty
+        if (!isProcessingQueue) { 
             [el.runOnceBtn, el.run5Btn, el.run5WaitBtn].forEach(btn => btn.disabled = false);
             el.runOnceBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Chạy 1 Job';
             el.run5Btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Chạy 5 Job';
@@ -494,13 +490,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const allBtns = [el.runOnceBtn, el.run5Btn, el.run5WaitBtn];
         allBtns.forEach(btn => { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Đang xử lý...'; });
         
-        const tokensToUse = tokens.slice(0, 10);
-        
-        for(const token of tokensToUse) {
-            showToast(`Đang xác thực Token cho... ${token.slice(0, 8)}...`, 'info');
+        for(const token of tokens.slice(0, 10)) {
+            showToast(`Đang xác thực Token... ${token.slice(0, 4)}...`, 'info');
             let ownerData;
             try { ownerData = await githubApi("/user", token); } 
-            catch (e) { showToast(`Token không hợp lệ, bỏ qua.`, "warning"); continue; }
+            catch (e) { showToast(`Token không hợp lệ: ${e.message}`, "error"); continue; }
             
             const activeJobsForToken = trackedJobs.filter(j => j.owner === ownerData.login && ['awaiting_confirmation', 'queued', 'in_progress'].includes(j.status)).length;
             let jobsToCreate = Math.max(0, Math.min(runsPerToken, MAX_JOBS_PER_TOKEN - activeJobsForToken));
@@ -508,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if(jobsToCreate === 0) continue;
 
             showToast(`Đã thêm ${jobsToCreate} job cho ${ownerData.login} vào hàng đợi.`, 'success');
-            const commit_sha_ref = { sha: null }; // Use a reference object to share the SHA across the batch
+            const commit_sha_ref = { sha: null }; 
             for (let i = 0; i < jobsToCreate; i++) {
                 actionQueue.push({ type: 'CREATE_JOB', payload: { token, owner: ownerData.login, template, cmd, pin, repoUrl, withRerun, commit_sha_ref }});
             }
