@@ -280,7 +280,6 @@ async function pollJobStatuses() {
     try {
         const jobsToConfirm = jobsToUpdate.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
         if (jobsToConfirm.length > 0) {
-            // *** FIX: Group jobs to confirm by owner to poll each repository separately ***
             const jobsByOwner = jobsToConfirm.reduce((acc, job) => {
                 if (!acc[job.owner]) acc[job.owner] = [];
                 acc[job.owner].push(job);
@@ -289,7 +288,6 @@ async function pollJobStatuses() {
 
             for (const owner in jobsByOwner) {
                 try {
-                    // *** FIX: Poll the correct repository for each owner ***
                     const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?per_page=20`, pollToken);
                     const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
                     const newRuns = workflow_runs.filter(run => !knownRunIds.has(run.id) && run.actor.login === owner);
@@ -319,27 +317,28 @@ async function pollJobStatuses() {
         }
 
         const jobsToMonitor = jobsToUpdate.filter(j => j.run_id && ['queued', 'in_progress'].includes(j.status));
-        if (jobsToMonitor.length > 0 && globalOwnerLogin) {
-            // This part can still use globalOwnerLogin as a quick check for active runs in general
-            const { workflow_runs } = await githubApi(`/repos/${globalOwnerLogin}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?status=in_progress,queued&per_page=100`, pollToken);
-            const activeRunMap = new Map(workflow_runs.map(run => [run.id, run]));
-            
-            for (const job of jobsToMonitor) {
-                const activeRun = activeRunMap.get(job.run_id);
-                if (activeRun) {
-                    if (job.status !== activeRun.status) {
-                        job.status = activeRun.status;
-                        changed = true;
-                    }
-                } else {
-                    try {
-                        const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
-                        if (finalRunData && (job.status !== finalRunData.status || job.conclusion !== finalRunData.conclusion)) {
-                            job.status = finalRunData.status; job.conclusion = finalRunData.conclusion; changed = true;
-                            if (job.status === 'completed') { showDesktopNotification(`Job #${finalRunData.run_number} ${job.conclusion}`, `Deployment đã hoàn thành.`); }
+        if (jobsToMonitor.length > 0) {
+            const monitorByOwner = jobsToMonitor.reduce((acc, job) => { if (!acc[job.owner]) acc[job.owner] = []; acc[job.owner].push(job); return acc; }, {});
+            for (const owner in monitorByOwner) {
+                try {
+                    const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?status=in_progress,queued&per_page=100`, pollToken);
+                    const activeRunMap = new Map(workflow_runs.map(run => [run.id, run]));
+                    
+                    for (const job of monitorByOwner[owner]) {
+                        const activeRun = activeRunMap.get(job.run_id);
+                        if (activeRun) {
+                            if (job.status !== activeRun.status) { job.status = activeRun.status; changed = true; }
+                        } else {
+                            try {
+                                const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
+                                if (finalRunData && (job.status !== finalRunData.status || job.conclusion !== finalRunData.conclusion)) {
+                                    job.status = finalRunData.status; job.conclusion = finalRunData.conclusion; changed = true;
+                                    if (job.status === 'completed') { showDesktopNotification(`Job #${finalRunData.run_number} ${job.conclusion}`, `Deployment đã hoàn thành.`); }
+                                }
+                            } catch (err) { console.warn(`Không thể lấy trạng thái cuối cùng cho job ${job.run_id}:`, err); job.status = 'completed'; job.conclusion = 'unknown'; changed = true; }
                         }
-                    } catch (err) { console.warn(`Không thể lấy trạng thái cuối cùng cho job ${job.run_id}:`, err); job.status = 'completed'; job.conclusion = 'unknown'; changed = true; }
-                }
+                    }
+                } catch(e) { console.error(`Failed to monitor runs for owner ${owner}:`, e); }
             }
         }
     } catch (error) { showToast(`Lỗi polling: ${error.message}`, 'error'); }
@@ -412,16 +411,13 @@ function renderJobs() {
     });
     updateFavicon();
 }
-// Function to trigger workflow, now with retry logic for 409 Conflict errors
+// *** FIX: Robust workflow trigger function ***
 async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl, withRerun) {
     let owner;
     try {
         const user = await githubApi("/user", token);
         owner = user.login;
-        if (!globalOwnerLogin) {
-            globalOwnerLogin = owner;
-            saveState();
-        }
+        if (!globalOwnerLogin) { globalOwnerLogin = owner; saveState(); }
     } catch (e) {
         showToast(`Token không hợp lệ. ${e.message}`, 'error');
         throw e;
@@ -433,7 +429,7 @@ async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl,
     saveState();
 
     try {
-        await githubApi(`/repos/${owner}/${REPO_NAME}`, token, { method: 'GET' }).catch(async (e) => {
+        await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(async (e) => {
             if (e.status === 404) {
                 await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) });
                 showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info');
@@ -441,42 +437,37 @@ async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl,
         });
 
         const path = `.github/workflows/${WORKFLOW_NAME}`;
+        const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
         const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun);
         const base64Content = btoa(unescape(encodeURIComponent(content)));
-        const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
-        
-        let updateFileResponse;
-        const MAX_RETRIES = 3;
 
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                let fileSha = null;
-                try {
-                    fileSha = (await githubApi(url, token, { method: 'GET' })).sha;
-                } catch (e) {
-                    if (e.status !== 404) throw e;
-                }
-                
-                updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Deploying build via runner`, content: base64Content, sha: fileSha || undefined }) });
-                break; // Success, exit loop
-            } catch (e) {
-                if (e.status === 409 && attempt < MAX_RETRIES) {
-                    console.warn(`Attempt ${attempt}: Got 409 Conflict, retrying in 500ms...`);
-                    await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retrying
-                } else {
-                    throw e; // Final attempt failed or other error
-                }
-            }
+        let remoteFile;
+        try { remoteFile = await githubApi(url, token); } catch (e) { if (e.status !== 404) throw e; }
+        
+        // Normalize content for comparison
+        const remoteBase64Content = remoteFile ? remoteFile.content.replace(/\s/g, '') : null;
+        
+        let fileSha = remoteFile ? remoteFile.sha : null;
+        
+        // *** FIX: Only update the file if it's missing or different ***
+        if (!remoteFile || remoteBase64Content !== base64Content.replace(/\s/g, '')) {
+            const updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Update build workflow`, content: base64Content, sha: fileSha || undefined }) });
+            job.commit_sha = updateFileResponse.commit.sha;
+        } else {
+             // File is identical, just get the latest commit SHA from the main branch
+            const mainBranch = await githubApi(`/repos/${owner}/${REPO_NAME}/branches/main`, token);
+            job.commit_sha = mainBranch.commit.sha;
         }
 
-        job.commit_sha = updateFileResponse.commit.sha;
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
         
-        showToast(`Đã kích hoạt build cho user: ${owner}`, "success");
+        showToast(`Đã kích hoạt build cho: ${owner}`, "success");
         startPolling();
-        return { success: true, commit_sha: job.commit_sha }; // Return success and sha
+        return { success: true, commit_sha: job.commit_sha };
     } catch (e) {
+        // *** FIX: Update UI correctly on initialization failure ***
         job.status = 'error';
+        job.name = 'Lỗi khởi tạo';
         job.errorMessage = e.message;
         renderJobs();
         saveState();
@@ -510,37 +501,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (jobsToCreate < runsPerToken) { showToast(`Token của ${ownerData.login} chỉ có thể tạo thêm ${jobsToCreate} job.`, 'info'); }
                 if (jobsToCreate === 0) return;
 
-                // First dispatch also updates the workflow file
-                const firstDispatchResult = await triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun);
-                if (!firstDispatchResult || !firstDispatchResult.success) return; // Stop if the first one fails
-                
-                const commit_sha = firstDispatchResult.commit_sha;
-                jobsToCreate--; // We've already created one
+                let firstDispatchResult;
+                try {
+                    firstDispatchResult = await triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun);
+                } catch(e) {
+                    // First job failed to initialize, no need to continue for this token
+                    return;
+                }
 
-                // *** FIX: Stagger subsequent dispatches to avoid race conditions ***
+                jobsToCreate--; 
+                
                 if (jobsToCreate > 0) {
-                    const subsequentDispatchPromises = [...Array(jobsToCreate)].map((_, i) => 
-                        new Promise(resolve => setTimeout(resolve, (i + 1) * 250)) // Staggered delay
-                        .then(async () => {
-                            const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: commit_sha, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner: ownerData.login, token, errorMessage: null };
-                            trackedJobs.unshift(job);
-                            renderJobs();
-                            try {
-                                await githubApi(`/repos/${ownerData.login}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
-                            } catch (e) {
-                                // *** FIX: Handle individual dispatch failures ***
-                                const failedJob = trackedJobs.find(j => j.tempId === job.tempId);
-                                if (failedJob) {
-                                    failedJob.status = 'error';
-                                    failedJob.errorMessage = `Dispatch failed: ${e.message}`;
-                                    renderJobs();
-                                    saveState();
-                                }
-                                showToast(`Lỗi dispatch cho ${ownerData.login}: ${e.message}`, 'error');
+                    const commit_sha = firstDispatchResult.commit_sha;
+                    for(let i = 0; i < jobsToCreate; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 250)); // Stagger subsequent dispatches
+                        const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner: ownerData.login, token, errorMessage: null };
+                        trackedJobs.unshift(job);
+                        renderJobs();
+                        try {
+                            await githubApi(`/repos/${ownerData.login}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
+                        } catch (e) {
+                            const failedJob = trackedJobs.find(j => j.tempId === job.tempId);
+                            if (failedJob) {
+                                failedJob.status = 'error'; failedJob.name = 'Lỗi khởi tạo'; failedJob.errorMessage = `Dispatch failed: ${e.message}`;
+                                renderJobs(); saveState();
                             }
-                        })
-                    );
-                    await Promise.all(subsequentDispatchPromises);
+                            showToast(`Lỗi dispatch cho ${ownerData.login}: ${e.message}`, 'error');
+                        }
+                    }
                 }
             })();
             dispatchPromises.push(promise);
