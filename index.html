@@ -411,67 +411,47 @@ function renderJobs() {
     });
     updateFavicon();
 }
-// *** FIX: Robust workflow trigger function ***
-async function triggerWorkflowDispatch(token, template, deployCmd, pin, repoUrl, withRerun) {
-    let owner;
-    try {
-        const user = await githubApi("/user", token);
-        owner = user.login;
-        if (!globalOwnerLogin) { globalOwnerLogin = owner; saveState(); }
-    } catch (e) {
-        showToast(`Token không hợp lệ. ${e.message}`, 'error');
-        throw e;
-    }
 
-    const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token, errorMessage: null };
-    trackedJobs.unshift(job);
-    renderJobs();
-    saveState();
-
+async function setupAndTriggerWorkflow(job, template, deployCmd, pin, repoUrl, withRerun) {
     try {
-        await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(async (e) => {
+        await githubApi(`/repos/${job.owner}/${REPO_NAME}`, job.token).catch(async (e) => {
             if (e.status === 404) {
-                await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) });
+                await githubApi("/user/repos", job.token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) });
                 showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info');
             } else throw e;
         });
 
         const path = `.github/workflows/${WORKFLOW_NAME}`;
-        const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
+        const url = `/repos/${job.owner}/${REPO_NAME}/contents/${path}`;
         const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun);
         const base64Content = btoa(unescape(encodeURIComponent(content)));
 
         let remoteFile;
-        try { remoteFile = await githubApi(url, token); } catch (e) { if (e.status !== 404) throw e; }
+        try { remoteFile = await githubApi(url, job.token); } catch (e) { if (e.status !== 404) throw e; }
         
-        // Normalize content for comparison
         const remoteBase64Content = remoteFile ? remoteFile.content.replace(/\s/g, '') : null;
-        
         let fileSha = remoteFile ? remoteFile.sha : null;
         
-        // *** FIX: Only update the file if it's missing or different ***
         if (!remoteFile || remoteBase64Content !== base64Content.replace(/\s/g, '')) {
-            const updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Update build workflow`, content: base64Content, sha: fileSha || undefined }) });
+            const updateFileResponse = await githubApi(url, job.token, { method: "PUT", body: JSON.stringify({ message: `ci: Update build workflow`, content: base64Content, sha: fileSha || undefined }) });
             job.commit_sha = updateFileResponse.commit.sha;
         } else {
-             // File is identical, just get the latest commit SHA from the main branch
-            const mainBranch = await githubApi(`/repos/${owner}/${REPO_NAME}/branches/main`, token);
+            const mainBranch = await githubApi(`/repos/${job.owner}/${REPO_NAME}/branches/main`, job.token);
             job.commit_sha = mainBranch.commit.sha;
         }
 
-        await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
+        await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, job.token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
         
-        showToast(`Đã kích hoạt build cho: ${owner}`, "success");
+        showToast(`Đã kích hoạt build cho: ${job.owner}`, "success");
         startPolling();
         return { success: true, commit_sha: job.commit_sha };
     } catch (e) {
-        // *** FIX: Update UI correctly on initialization failure ***
         job.status = 'error';
         job.name = 'Lỗi khởi tạo';
         job.errorMessage = e.message;
         renderJobs();
         saveState();
-        showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error');
+        showToast(`Lỗi thiết lập cho ${job.owner}: ${e.message}`, 'error');
         throw e;
     }
 }
@@ -500,21 +480,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 let jobsToCreate = Math.max(0, Math.min(runsPerToken, MAX_JOBS_PER_TOKEN - activeJobsForToken));
                 if (jobsToCreate < runsPerToken) { showToast(`Token của ${ownerData.login} chỉ có thể tạo thêm ${jobsToCreate} job.`, 'info'); }
                 if (jobsToCreate === 0) return;
+                
+                // *** FIX: Create first job placeholder, then setup and trigger ***
+                const firstJob = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner: ownerData.login, token, errorMessage: null };
+                trackedJobs.unshift(firstJob);
+                renderJobs();
+                saveState();
 
                 let firstDispatchResult;
                 try {
-                    firstDispatchResult = await triggerWorkflowDispatch(token, template, cmd, pin, repoUrl, withRerun);
-                } catch(e) {
-                    // First job failed to initialize, no need to continue for this token
-                    return;
-                }
+                    firstDispatchResult = await setupAndTriggerWorkflow(firstJob, template, cmd, pin, repoUrl, withRerun);
+                } catch(e) { return; } // Error is handled inside the function
 
                 jobsToCreate--; 
                 
                 if (jobsToCreate > 0) {
                     const commit_sha = firstDispatchResult.commit_sha;
                     for(let i = 0; i < jobsToCreate; i++) {
-                        await new Promise(resolve => setTimeout(resolve, 250)); // Stagger subsequent dispatches
+                        await new Promise(resolve => setTimeout(resolve, 250)); 
                         const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner: ownerData.login, token, errorMessage: null };
                         trackedJobs.unshift(job);
                         renderJobs();
