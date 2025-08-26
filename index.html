@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>App Deployment Runner</title>
-<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -292,7 +292,7 @@ async function pollJobStatuses() {
 
     const promises = Object.keys(jobsByOwner).map(async (owner) => {
         const ownerJobs = jobsByOwner[owner];
-        const awaitingJobs = ownerJobs.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
+        const jobsAwaitingConfirmation = ownerJobs.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
         const monitoringJobs = ownerJobs.filter(j => j.run_id);
         
         try {
@@ -300,22 +300,31 @@ async function pollJobStatuses() {
             const searchDate = new Date(oldestStartTime - 30000).toISOString();
             const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?created:>=${searchDate}&per_page=100`, pollToken);
 
-            const runsBySha = new Map();
-            workflow_runs.forEach(run => {
-                if (!runsBySha.has(run.head_sha)) runsBySha.set(run.head_sha, []);
-                runsBySha.get(run.head_sha).push(run);
-            });
-            const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
+            // --- FIX: Robust Matching Logic ---
+            if (jobsAwaitingConfirmation.length > 0) {
+                const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
+                const commitSha = jobsAwaitingConfirmation[0].commit_sha; // All jobs in a batch share the same sha
 
-            for (const job of awaitingJobs) {
-                const potentialRuns = runsBySha.get(job.commit_sha);
-                if (potentialRuns) {
-                    const newRun = potentialRuns.find(r => !knownRunIds.has(r.id));
-                    if (newRun) {
-                        job.run_id = newRun.id; job.status = newRun.status; job.conclusion = newRun.conclusion; job.html_url = newRun.html_url;
+                // 1. Filter for potential new runs that match the commit and are not yet tracked
+                const potentialNewRuns = workflow_runs
+                    .filter(run => run.head_sha === commitSha && !knownRunIds.has(run.id))
+                    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); // Sort oldest first to match correctly
+
+                // 2. Match the awaiting jobs with the new runs one-by-one
+                const sortedAwaitingJobs = jobsAwaitingConfirmation.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+                for (let i = 0; i < sortedAwaitingJobs.length; i++) {
+                    if (i < potentialNewRuns.length) {
+                        const job = sortedAwaitingJobs[i];
+                        const newRun = potentialNewRuns[i];
+                        job.run_id = newRun.id;
+                        job.status = newRun.status;
+                        job.conclusion = newRun.conclusion;
+                        job.html_url = newRun.html_url;
                         job.run_number = newRun.run_number;
-                        job.name = `#${newRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
-                        knownRunIds.add(newRun.id);
+                        job.name = `#${newRun.run_number} - Build bởi ${job.owner}`;
+                        delete job.commit_sha;
+                        changed = true;
                     }
                 }
             }
@@ -428,14 +437,12 @@ function renderJobs() {
         
         // --- FIX: Smart sorting logic ---
         const ownerJobs = jobsByOwner[owner];
-        // 1. Separate jobs into 'awaiting' and 'confirmed'
         const awaiting = ownerJobs.filter(j => j.status === 'awaiting_confirmation')
-                                 .sort((a, b) => new Date(b.startTime) - new Date(a.startTime)); // Sort newest first
+                                 .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
         
         const confirmed = ownerJobs.filter(j => j.status !== 'awaiting_confirmation')
-                                 .sort((a, b) => (b.run_number || 0) - (a.run_number || 0)); // Sort by run_number
+                                 .sort((a, b) => (b.run_number || 0) - (a.run_number || 0));
         
-        // 2. Combine them, with awaiting jobs always on top
         const jobs = [...awaiting, ...confirmed];
 
         const activeJobCount = jobs.filter(j => !['completed', 'error'].includes(j.status)).length;
@@ -578,7 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     el.quickCancelBtn.addEventListener('click', quickCancelAll);
 
-    el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Đang làm mới trạng thái..."); apiCache = {}; await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
+    el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Đang làm mới trạng thái...", "info"); apiCache = {}; await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
     el.clearHistoryBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build? Hành động này không thể hoàn tác.')) { trackedJobs = []; saveState(); renderJobs(); showToast('Lịch sử đã được xóa.', 'info'); } });
     el.themeToggleBtn.addEventListener('click', () => { const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
     
