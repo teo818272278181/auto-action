@@ -266,7 +266,7 @@ async function githubApi(endpoint, token, options = {}) {
 }
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
 
-// --- *** NEW *** Unified & Robust Polling Logic ---
+// --- *** NEW: Unified & Robust Polling Logic ***
 async function pollJobStatuses() {
     stopPolling();
     const jobsToUpdate = trackedJobs.filter(j => !['completed', 'error'].includes(j.status));
@@ -293,7 +293,7 @@ async function pollJobStatuses() {
 
     for (const owner in jobsByOwner) {
         try {
-            const searchDate = new Date(new Date(jobsByOwner[owner].oldestStartTime) - 15000).toISOString(); // Look 15s before the first job
+            const searchDate = new Date(new Date(jobsByOwner[owner].oldestStartTime) - 15000).toISOString();
             const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?created:>=${searchDate}&per_page=100`, pollToken);
             
             const runsById = new Map(workflow_runs.map(run => [run.id, run]));
