@@ -199,17 +199,20 @@ const templateDescriptions = {
 // --- Helper Functions ---
 function timeAgo(date) { const seconds = Math.floor((new Date() - date) / 1000); let interval = seconds / 31536000; if (interval > 1) return Math.floor(interval) + " năm trước"; interval = seconds / 2592000; if (interval > 1) return Math.floor(interval) + " tháng trước"; interval = seconds / 86400; if (interval > 1) return Math.floor(interval) + " ngày trước"; interval = seconds / 3600; if (interval > 1) return Math.floor(interval) + " giờ trước"; interval = seconds / 60; if (interval > 1) return Math.floor(interval) + " phút trước"; return "vài giây trước"; }
 function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
+    // --- FIX: Add a unique identifier to the workflow content to force a new commit ---
+    const uniqueId = `# Batch-ID: ${Date.now()}-${Math.random()}`;
     const onTrigger = `on:\n  workflow_dispatch:`;
 
     switch(template) {
         case 'git-tool-linux':
             const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git';
-            let workflow = `name: Git Tool Runner\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
+            let workflow = `name: Git Tool Runner\n${uniqueId}\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
             if (withRerun) { workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`; }
             return workflow;
         case 'crd-windows':
         default:
             return `name: CRD Environment Setup
+${uniqueId}
 ${onTrigger}
 jobs:
   build:
@@ -300,17 +303,14 @@ async function pollJobStatuses() {
             const searchDate = new Date(oldestStartTime - 30000).toISOString();
             const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?created:>=${searchDate}&per_page=100`, pollToken);
 
-            // --- FIX: Robust Matching Logic ---
             if (jobsAwaitingConfirmation.length > 0) {
                 const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
-                const commitSha = jobsAwaitingConfirmation[0].commit_sha; // All jobs in a batch share the same sha
+                const commitSha = jobsAwaitingConfirmation[0].commit_sha;
 
-                // 1. Filter for potential new runs that match the commit and are not yet tracked
                 const potentialNewRuns = workflow_runs
                     .filter(run => run.head_sha === commitSha && !knownRunIds.has(run.id))
-                    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); // Sort oldest first to match correctly
+                    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-                // 2. Match the awaiting jobs with the new runs one-by-one
                 const sortedAwaitingJobs = jobsAwaitingConfirmation.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
                 for (let i = 0; i < sortedAwaitingJobs.length; i++) {
@@ -435,7 +435,6 @@ function renderJobs() {
         ownerGroup.className = 'card rounded-lg overflow-hidden';
         ownerGroup.innerHTML = `<div class="owner-header p-4 flex justify-between items-center cursor-pointer" data-owner="${owner}"><div class="font-bold text-lg">${owner}</div><div class="flex items-center gap-4"><span class="active-count bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full"></span><span class="total-count bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full"></span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}"></div>`;
         
-        // --- FIX: Smart sorting logic ---
         const ownerJobs = jobsByOwner[owner];
         const awaiting = ownerJobs.filter(j => j.status === 'awaiting_confirmation')
                                  .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
@@ -496,16 +495,12 @@ async function handleCreateJob(payload) {
             showToast(`Đang cập nhật Workflow cho ${owner}...`, 'info');
             await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(e => { if (e.status === 404) return githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); throw e; });
             const path = `.github/workflows/${WORKFLOW_NAME}`; const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
-            const content = getWorkflowContent(template, cmd, pin, repoUrl, withRerun); const base64Content = btoa(unescape(encodeURIComponent(content)));
+            const content = getWorkflowContent(template, cmd, pin, repoUrl, withRerun); 
+            const base64Content = btoa(unescape(encodeURIComponent(content)));
             let remoteFile; try { remoteFile = await githubApi(url, token); } catch (e) { if (e.status !== 404) throw e; }
-            const remoteBase64Content = remoteFile ? remoteFile.content.replace(/\s/g, '') : null;
-            if (!remoteFile || remoteBase64Content !== base64Content.replace(/\s/g, '')) {
-                const updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Update build workflow`, content: base64Content, sha: remoteFile?.sha }) });
-                batch.commit_sha = updateFileResponse.commit.sha;
-            } else {
-                const mainBranch = await githubApi(`/repos/${owner}/${REPO_NAME}/branches/main`, token);
-                batch.commit_sha = mainBranch.commit.sha;
-            }
+            
+            const updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Trigger build batch`, content: base64Content, sha: remoteFile?.sha }) });
+            batch.commit_sha = updateFileResponse.commit.sha;
         }
         job.commit_sha = batch.commit_sha;
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
