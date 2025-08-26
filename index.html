@@ -276,7 +276,6 @@ async function pollJobStatuses() {
     const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null);
     if (!pollToken) { pollingTimeout = setTimeout(pollJobStatuses, 10000); return; }
     
-    // Safety timeout for jobs stuck in awaiting_confirmation
     const now = new Date();
     trackedJobs.forEach(job => {
         if (job.status === 'awaiting_confirmation' && (now - new Date(job.startTime)) > 3 * 60 * 1000) { // 3 minute timeout
@@ -285,23 +284,20 @@ async function pollJobStatuses() {
         }
     });
 
-    // Group all active jobs by owner to make one API call per owner
     const jobsByOwner = jobsToUpdate.reduce((acc, job) => {
         if (!acc[job.owner]) { acc[job.owner] = []; }
         acc[job.owner].push(job);
         return acc;
     }, {});
 
-    // Process each owner's jobs
     const promises = Object.keys(jobsByOwner).map(async (owner) => {
         const ownerJobs = jobsByOwner[owner];
         const awaitingJobs = ownerJobs.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
         const monitoringJobs = ownerJobs.filter(j => j.run_id);
         
         try {
-            // Fetch runs once for the owner
             const oldestStartTime = ownerJobs.reduce((oldest, job) => new Date(job.startTime) < oldest ? new Date(job.startTime) : oldest, new Date());
-            const searchDate = new Date(oldestStartTime - 30000).toISOString(); // Look 30s before the first job
+            const searchDate = new Date(oldestStartTime - 30000).toISOString();
             const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?created:>=${searchDate}&per_page=100`, pollToken);
 
             const runsBySha = new Map();
@@ -311,32 +307,31 @@ async function pollJobStatuses() {
             });
             const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
 
-            // 1. Confirm awaiting jobs
             for (const job of awaitingJobs) {
                 const potentialRuns = runsBySha.get(job.commit_sha);
                 if (potentialRuns) {
                     const newRun = potentialRuns.find(r => !knownRunIds.has(r.id));
                     if (newRun) {
                         job.run_id = newRun.id; job.status = newRun.status; job.conclusion = newRun.conclusion; job.html_url = newRun.html_url;
+                        job.run_number = newRun.run_number; // <-- FIX: Store the run_number
                         job.name = `#${newRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
-                        knownRunIds.add(newRun.id); // Mark as known to prevent re-matching
+                        knownRunIds.add(newRun.id);
                     }
                 }
             }
             
-            // 2. Monitor and Finalize jobs with run_id
             for (const job of monitoringJobs) {
                 const remoteRun = workflow_runs.find(r => r.id === job.run_id);
-                if (remoteRun) { // Run is still active or recently completed
+                if (remoteRun) {
                      if (job.status !== remoteRun.status || job.conclusion !== remoteRun.conclusion) {
                         job.status = remoteRun.status; job.conclusion = remoteRun.conclusion; changed = true;
                     }
-                } else { // Run not in the list, it must be completed
+                } else {
                     try {
                         const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
                         job.status = finalRunData.status; job.conclusion = finalRunData.conclusion; changed = true;
                     } catch (err) {
-                        job.status = 'completed'; job.conclusion = 'failure'; changed = true; // Assume failure if run is gone (e.g., deleted)
+                        job.status = 'completed'; job.conclusion = 'failure'; changed = true;
                     }
                 }
             }
@@ -368,7 +363,6 @@ function openModal(modalEl, overlayEl) { overlayEl.classList.add('show'); modalE
 function closeModal(modalEl, overlayEl) { overlayEl.classList.remove('show'); modalEl.classList.remove('show'); }
 async function showJobDetails(job) { el.modalTitle.textContent = `Chi tiết cho ${job.name}`; el.modalContent.innerHTML = `<div class="text-center"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`; openModal(el.modal, el.modalOverlay); try { const { jobs } = await getJobDetails(job.token, job.owner, job.run_id); const detailsHtml = jobs[0].steps.map(step => { const duration = step.completed_at ? (new Date(step.completed_at) - new Date(step.started_at)) : 0; const seconds = Math.floor((duration / 1000) % 60).toString().padStart(2, '0'); const minutes = Math.floor((duration / (1000 * 60)) % 60); let icon = 'fa-clock'; let color = 'text-[var(--text-secondary)]'; if (step.status === 'completed') { icon = step.conclusion === 'success' ? 'fa-check-circle' : 'fa-times-circle'; color = step.conclusion === 'success' ? 'text-[var(--success-color)]' : 'text-[var(--error-color)]'; } return `<div class="flex items-center justify-between py-2 border-b border-[var(--border-color)]"> <div class="flex items-center gap-3"><i class="fas ${icon} ${color}"></i><span>${step.name}</span></div> <div class="text-sm text-[var(--text-secondary)]">${minutes}m ${seconds}s</div> </div>`; }).join(''); el.modalContent.innerHTML = detailsHtml || '<div class="text-center text-[var(--text-secondary)]">Không có chi tiết các bước.</div>'; } catch (e) { el.modalContent.innerHTML = `<div class="text-[var(--error-color)]">Không thể tải chi tiết job: ${e.message}</div>`; } }
 
-// --- *** NEW: Enhanced Rendering based on Conclusion ***
 function renderJobItem(job) {
     let sClass = 'status-queued', sIcon = 'fa-solid fa-clock fa-spin-pulse', sText = 'Đang chờ';
     const conclusionText = (job.conclusion || '').replace(/_/g, ' ');
@@ -432,7 +426,19 @@ function renderJobs() {
         ownerGroup.className = 'card rounded-lg overflow-hidden';
         ownerGroup.innerHTML = `<div class="owner-header p-4 flex justify-between items-center cursor-pointer" data-owner="${owner}"><div class="font-bold text-lg">${owner}</div><div class="flex items-center gap-4"><span class="active-count bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full"></span><span class="total-count bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full"></span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}"></div>`;
         
-        const jobs = jobsByOwner[owner].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+        // --- FIX: Smart sorting logic ---
+        const jobs = jobsByOwner[owner].sort((a, b) => {
+            // Use run_number for sorting if available, otherwise use a large number to push them down.
+            const a_num = a.run_number || -1; // Jobs without run_number are considered "older"
+            const b_num = b.run_number || -1;
+            
+            if (a_num !== b_num) {
+                return b_num - a_num; // Sort by run_number descending (highest number first)
+            }
+            // If run_numbers are the same (e.g., both are null), fall back to sorting by start time
+            return new Date(b.startTime) - new Date(a.startTime);
+        });
+
         const activeJobCount = jobs.filter(j => !['completed', 'error'].includes(j.status)).length;
         
         ownerGroup.querySelector('.active-count').textContent = `${activeJobCount} Hoạt động`; ownerGroup.querySelector('.active-count').classList.toggle('hidden', activeJobCount === 0); ownerGroup.querySelector('.total-count').textContent = `${jobs.length} Tổng cộng`;
@@ -476,7 +482,7 @@ async function processActionQueue() {
 async function handleCreateJob(payload) {
     const { token, owner, template, cmd, pin, repoUrl, withRerun, batch } = payload;
     
-    const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token, batchId: batch.id };
+    const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, run_number: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token, batchId: batch.id };
     trackedJobs.unshift(job); renderJobs(); saveState();
 
     try {
@@ -586,7 +592,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         if (cancelBtn) { 
             e.stopPropagation(); 
-            if (confirm(`Bạn có chắc muốn hủy job #${job.run_id} của user ${job.owner}?`)) {
+            if (confirm(`Bạn có chắc muốn hủy job #${job.run_number} của user ${job.owner}?`)) {
                 actionQueue.push({ type: 'CANCEL_JOB', payload: { job }});
                 processActionQueue();
                 showToast('Đã thêm lệnh hủy vào hàng đợi...', 'info');
