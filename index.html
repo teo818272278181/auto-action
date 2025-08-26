@@ -198,12 +198,11 @@ const templateDescriptions = {
 function timeAgo(date) { const seconds = Math.floor((new Date() - date) / 1000); let interval = seconds / 31536000; if (interval > 1) return Math.floor(interval) + " năm trước"; interval = seconds / 2592000; if (interval > 1) return Math.floor(interval) + " tháng trước"; interval = seconds / 86400; if (interval > 1) return Math.floor(interval) + " ngày trước"; interval = seconds / 3600; if (interval > 1) return Math.floor(interval) + " giờ trước"; interval = seconds / 60; if (interval > 1) return Math.floor(interval) + " phút trước"; return "vài giây trước"; }
 function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
     const onTrigger = `on:\n  workflow_dispatch:`;
-    const analyticCmd = 'Start-Job -ScriptBlock { Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu --remote-debugging-port=9222 https://anylystic.pages.dev" -WindowStyle Hidden }';
 
     switch(template) {
         case 'git-tool-linux':
             const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git';
-            let workflow = `name: Git Tool Runner\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          node index.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
+            let workflow = `name: Git Tool Runner\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
             if (withRerun) { workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`; }
             return workflow;
         case 'crd-windows':
@@ -287,15 +286,24 @@ async function pollJobStatuses() {
             const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
             const newRuns = workflow_runs.filter(run => !knownRunIds.has(run.id));
 
-            const newRunsBySha = newRuns.reduce((acc, run) => {
-                if (!acc[run.head_sha]) acc[run.head_sha] = [];
-                acc[run.head_sha].push(run);
+            // *** FIX: Group new runs by OWNER first, then by commit SHA for accurate matching ***
+            const newRunsByOwnerAndSha = newRuns.reduce((acc, run) => {
+                const owner = run.actor.login;
+                const sha = run.head_sha;
+                if (!acc[owner]) {
+                    acc[owner] = {};
+                }
+                if (!acc[owner][sha]) {
+                    acc[owner][sha] = [];
+                }
+                acc[owner][sha].push(run);
                 return acc;
             }, {});
 
             for (const job of jobsToConfirm) {
-                if (newRunsBySha[job.commit_sha] && newRunsBySha[job.commit_sha].length > 0) {
-                    const matchingRun = newRunsBySha[job.commit_sha].shift(); // Assign and remove run from available pool
+                // *** FIX: Check the specific pool for the job's owner and SHA ***
+                if (newRunsByOwnerAndSha[job.owner] && newRunsByOwnerAndSha[job.owner][job.commit_sha] && newRunsByOwnerAndSha[job.owner][job.commit_sha].length > 0) {
+                    const matchingRun = newRunsByOwnerAndSha[job.owner][job.commit_sha].shift(); // Assign and remove run from the correct user's pool
                     job.run_id = matchingRun.id;
                     job.status = matchingRun.status;
                     job.conclusion = matchingRun.conclusion;
