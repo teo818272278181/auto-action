@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>App Deployment Runner</title>
-<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -266,7 +266,7 @@ async function githubApi(endpoint, token, options = {}) {
 }
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
 
-// --- *** NEW: Direct & Robust Polling Logic ***
+// --- Polling Logic ---
 async function pollJobStatuses() {
     stopPolling();
     const jobsToUpdate = trackedJobs.filter(j => !['completed', 'error'].includes(j.status));
@@ -313,7 +313,7 @@ async function pollJobStatuses() {
                     const newRun = potentialRuns.find(r => !knownRunIds.has(r.id));
                     if (newRun) {
                         job.run_id = newRun.id; job.status = newRun.status; job.conclusion = newRun.conclusion; job.html_url = newRun.html_url;
-                        job.run_number = newRun.run_number; // <-- FIX: Store the run_number
+                        job.run_number = newRun.run_number;
                         job.name = `#${newRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
                         knownRunIds.add(newRun.id);
                     }
@@ -427,17 +427,16 @@ function renderJobs() {
         ownerGroup.innerHTML = `<div class="owner-header p-4 flex justify-between items-center cursor-pointer" data-owner="${owner}"><div class="font-bold text-lg">${owner}</div><div class="flex items-center gap-4"><span class="active-count bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full"></span><span class="total-count bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full"></span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}"></div>`;
         
         // --- FIX: Smart sorting logic ---
-        const jobs = jobsByOwner[owner].sort((a, b) => {
-            // Use run_number for sorting if available, otherwise use a large number to push them down.
-            const a_num = a.run_number || -1; // Jobs without run_number are considered "older"
-            const b_num = b.run_number || -1;
-            
-            if (a_num !== b_num) {
-                return b_num - a_num; // Sort by run_number descending (highest number first)
-            }
-            // If run_numbers are the same (e.g., both are null), fall back to sorting by start time
-            return new Date(b.startTime) - new Date(a.startTime);
-        });
+        const ownerJobs = jobsByOwner[owner];
+        // 1. Separate jobs into 'awaiting' and 'confirmed'
+        const awaiting = ownerJobs.filter(j => j.status === 'awaiting_confirmation')
+                                 .sort((a, b) => new Date(b.startTime) - new Date(a.startTime)); // Sort newest first
+        
+        const confirmed = ownerJobs.filter(j => j.status !== 'awaiting_confirmation')
+                                 .sort((a, b) => (b.run_number || 0) - (a.run_number || 0)); // Sort by run_number
+        
+        // 2. Combine them, with awaiting jobs always on top
+        const jobs = [...awaiting, ...confirmed];
 
         const activeJobCount = jobs.filter(j => !['completed', 'error'].includes(j.status)).length;
         
