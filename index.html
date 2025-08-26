@@ -356,6 +356,7 @@ async function pollJobStatuses() {
     }
 }
 function startPolling() { if (!pollingTimeout) { pollJobStatuses(); } }
+function stopPolling() { if (pollingTimeout) { clearTimeout(pollingTimeout); pollingTimeout = null; } }
 
 // --- UI, State, Modal Functions ---
 function updateUIForTemplate() { const isWindows = el.templateSelect.value === 'crd-windows'; el.crdOptions.classList.toggle('hidden', !isWindows); el.gitToolOptions.classList.toggle('hidden', isWindows); const showGitButtons = !isWindows; el.run5Btn.classList.toggle('hidden', !showGitButtons); el.run5WaitBtn.classList.toggle('hidden', !showGitButtons); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-1', !showGitButtons); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-3', showGitButtons); el.templateDescription.textContent = templateDescriptions[el.templateSelect.value]; }
