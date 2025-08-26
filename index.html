@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>App Deployment Runner</title>
-<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
+<link id="favicon" rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -279,28 +279,27 @@ async function pollJobStatuses() {
 
     try {
         const now = new Date();
-        // *** NEW: Add timeout for jobs stuck in awaiting_confirmation ***
         trackedJobs.forEach(job => {
             if (job.status === 'awaiting_confirmation' && (now - new Date(job.startTime)) > 3 * 60 * 1000) { // 3 minute timeout
-                job.status = 'error';
-                job.name = 'Lỗi (Timeout)';
-                job.errorMessage = 'Không tìm thấy workflow run tương ứng sau 3 phút.';
-                changed = true;
+                job.status = 'error'; job.name = 'Lỗi (Timeout)';
+                job.errorMessage = 'Không tìm thấy workflow run tương ứng sau 3 phút.'; changed = true;
             }
         });
 
         const jobsToConfirm = jobsToUpdate.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
         if (jobsToConfirm.length > 0) {
-            const jobsByOwner = jobsToConfirm.reduce((acc, job) => { if (!acc[job.owner]) acc[job.owner] = []; acc[job.owner].push(job); return acc; }, {});
+            const jobsByOwner = jobsToConfirm.reduce((acc, job) => { if (!acc[job.owner]) acc[job.owner] = { jobs: [], oldestTime: job.startTime }; if (job.startTime < acc[job.owner].oldestTime) acc[job.owner].oldestTime = job.startTime; acc[job.owner].jobs.push(job); return acc; }, {});
 
             for (const owner in jobsByOwner) {
                 try {
-                    const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?status=queued,in_progress,waiting&per_page=30`, pollToken);
+                    // *** NEW: Use `created` parameter for robust run fetching ***
+                    const searchDate = new Date(jobsByOwner[owner].oldestTime - 10000).toISOString(); // Look 10s before the first job
+                    const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?status=queued,in_progress,waiting&created:>=${searchDate}&per_page=100`, pollToken);
                     const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
                     const newRuns = workflow_runs.filter(run => !knownRunIds.has(run.id) && run.actor.login === owner);
                     const newRunsBySha = newRuns.reduce((acc, run) => { if (!acc[run.head_sha]) acc[run.head_sha] = []; acc[run.head_sha].push(run); return acc; }, {});
 
-                    for (const job of jobsByOwner[owner]) {
+                    for (const job of jobsByOwner[owner].jobs) {
                         if (newRunsBySha[job.commit_sha] && newRunsBySha[job.commit_sha].length > 0) {
                             const matchingRun = newRunsBySha[job.commit_sha].shift();
                             job.run_id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url;
@@ -323,22 +322,16 @@ async function pollJobStatuses() {
                         const activeRun = activeRunMap.get(job.run_id);
                         if (activeRun) { if (job.status !== activeRun.status) { job.status = activeRun.status; changed = true; } } 
                         else {
-                            // *** NEW: Two-layer approach to get final status ***
-                            try {
-                                // Layer 1: Attempt to get the job's conclusion (most reliable)
+                             try {
                                 const { jobs } = await getJobDetails(job.token, job.owner, job.run_id);
                                 if (jobs && jobs.length > 0 && jobs[0].conclusion) {
-                                    job.status = 'completed';
-                                    job.conclusion = jobs[0].conclusion;
+                                    job.status = 'completed'; job.conclusion = jobs[0].conclusion;
                                 } else {
-                                    // Layer 2: Fallback to the run's conclusion
                                     const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
-                                    job.status = 'completed';
-                                    job.conclusion = finalRunData.conclusion || 'failure'; // Default to failure if conclusion is null
+                                    job.status = 'completed'; job.conclusion = finalRunData.conclusion || 'failure';
                                 }
                             } catch (err) {
-                                job.status = 'completed';
-                                job.conclusion = err.status === 404 ? 'failure' : 'unknown'; // Mark as failure if deleted
+                                job.status = 'completed'; job.conclusion = err.status === 404 ? 'failure' : 'unknown';
                             }
                             changed = true;
                         }
@@ -443,13 +436,13 @@ async function processActionQueue() {
 }
 
 async function handleCreateJob(payload) {
-    const { token, owner, template, cmd, pin, repoUrl, withRerun, commit_sha_ref } = payload;
+    const { token, owner, template, cmd, pin, repoUrl, withRerun, batch } = payload;
     
     const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token };
     trackedJobs.unshift(job); renderJobs(); saveState();
 
     try {
-        if (!commit_sha_ref.sha) {
+        if (!batch.commit_sha) {
             showToast(`Đang cập nhật Workflow cho ${owner}...`, 'info');
             await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(e => { if (e.status === 404) return githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); throw e; });
             const path = `.github/workflows/${WORKFLOW_NAME}`; const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
@@ -458,13 +451,13 @@ async function handleCreateJob(payload) {
             const remoteBase64Content = remoteFile ? remoteFile.content.replace(/\s/g, '') : null;
             if (!remoteFile || remoteBase64Content !== base64Content.replace(/\s/g, '')) {
                 const updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Update build workflow`, content: base64Content, sha: remoteFile?.sha }) });
-                commit_sha_ref.sha = updateFileResponse.commit.sha;
+                batch.commit_sha = updateFileResponse.commit.sha;
             } else {
                 const mainBranch = await githubApi(`/repos/${owner}/${REPO_NAME}/branches/main`, token);
-                commit_sha_ref.sha = mainBranch.commit.sha;
+                batch.commit_sha = mainBranch.commit.sha;
             }
         }
-        job.commit_sha = commit_sha_ref.sha;
+        job.commit_sha = batch.commit_sha;
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
         startPolling();
     } catch (e) {
@@ -502,9 +495,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if(jobsToCreate === 0) continue;
 
             showToast(`Đã thêm ${jobsToCreate} job cho ${ownerData.login} vào hàng đợi.`, 'success');
-            const commit_sha_ref = { sha: null }; 
+            const batch = { id: Date.now(), commit_sha: null }; 
             for (let i = 0; i < jobsToCreate; i++) {
-                actionQueue.push({ type: 'CREATE_JOB', payload: { token, owner: ownerData.login, template, cmd, pin, repoUrl, withRerun, commit_sha_ref }});
+                actionQueue.push({ type: 'CREATE_JOB', payload: { token, owner: ownerData.login, template, cmd, pin, repoUrl, withRerun, batch }});
             }
         }
         
