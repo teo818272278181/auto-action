@@ -206,7 +206,7 @@ function getWorkflowContent(template, command, pin = "123456", repoUrl = '', wit
     switch(template) {
         case 'git-tool-linux':
             const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git';
-            let workflow = `name: Git Tool Runner\n${uniqueId}\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n          chmod +x node\n          ./node app.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
+            let workflow = `name: Git Tool Runner\n${uniqueId}\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n            node index.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
             if (withRerun) { workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`; }
             return workflow;
         case 'crd-windows':
