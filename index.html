@@ -253,7 +253,7 @@ async function githubApi(endpoint, token, options = {}) {
     const responseBody = response.status === 204 || response.status === 202 ? null : await response.json();
     
     if (!response.ok) {
-        const error = new Error(`Lỗi GitHub API (${response.status}): ${responseBody.message || 'Lỗi không xác định'}`);
+        const error = new Error(`Lỗi API (${response.status}): ${responseBody.message || 'Lỗi không xác định'}`);
         error.status = response.status;
         throw error;
     }
@@ -293,26 +293,35 @@ async function pollJobStatuses() {
 
     for (const owner in jobsByOwner) {
         try {
-            const searchDate = new Date(new Date(jobsByOwner[owner].oldestStartTime) - 15000).toISOString();
+            const searchDate = new Date(new Date(jobsByOwner[owner].oldestStartTime) - 15000).toISOString(); // Look 15s before the first job
             const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?created:>=${searchDate}&per_page=100`, pollToken);
             
             const runsById = new Map(workflow_runs.map(run => [run.id, run]));
-            const newRunsBySha = workflow_runs.reduce((acc, run) => {
+            const runsBySha = workflow_runs.reduce((acc, run) => {
                 if (!acc[run.head_sha]) acc[run.head_sha] = [];
                 acc[run.head_sha].push(run);
                 return acc;
             }, {});
+            const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
 
             for (const job of jobsByOwner[owner].jobs) {
-                if (job.run_id) { // Job is being monitored
-                    const remoteRun = runsById.get(job.run_id);
-                    if (remoteRun) {
-                        if (job.status !== remoteRun.status || job.conclusion !== remoteRun.conclusion) {
-                            job.status = remoteRun.status;
-                            job.conclusion = remoteRun.conclusion;
-                            changed = true;
+                // Step 1: Confirm job if it's awaiting
+                if (job.status === 'awaiting_confirmation' && job.commit_sha) {
+                    if (runsBySha[job.commit_sha] && runsBySha[job.commit_sha].length > 0) {
+                        const matchingRun = runsBySha[job.commit_sha].find(r => !knownRunIds.has(r.id)) || runsBySha[job.commit_sha].shift();
+                        if(matchingRun) {
+                            job.run_id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url;
+                            job.name = `#${matchingRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
+                            knownRunIds.add(job.run_id); // Mark as known immediately
                         }
-                    } else { // Run not in the list, means it's completed
+                    }
+                }
+                // Step 2: Monitor or finalize job if it has a run_id
+                if (job.run_id) {
+                    const remoteRun = runsById.get(job.run_id);
+                    if (remoteRun && remoteRun.status !== 'completed') {
+                         if (job.status !== remoteRun.status) { job.status = remoteRun.status; changed = true; }
+                    } else { // Run is completed or not in the active list, get its final state
                         try {
                             const { jobs: jobSteps } = await getJobDetails(job.token, job.owner, job.run_id);
                             if (jobSteps && jobSteps.length > 0 && jobSteps[0].conclusion) {
@@ -326,24 +335,15 @@ async function pollJobStatuses() {
                         }
                         changed = true;
                     }
-                } else if (job.commit_sha) { // Job is awaiting confirmation
-                    if (newRunsBySha[job.commit_sha] && newRunsBySha[job.commit_sha].length > 0) {
-                        const matchingRun = newRunsBySha[job.commit_sha].shift();
-                        job.run_id = matchingRun.id; job.status = matchingRun.status; job.conclusion = matchingRun.conclusion; job.html_url = matchingRun.html_url;
-                        job.name = `#${matchingRun.run_number} - Build bởi ${job.owner}`; delete job.commit_sha; changed = true;
-                    }
                 }
             }
-        } catch (e) {
-            console.error(`Polling error for owner ${owner}:`, e);
-        }
+        } catch (e) { console.error(`Polling error for owner ${owner}:`, e); }
     }
 
     if (changed) { renderJobs(); saveState(); }
-
     const hasActiveJobs = trackedJobs.some(j => !['completed', 'error'].includes(j.status));
     if (hasActiveJobs) {
-        let interval = trackedJobs.some(j => j.status === 'awaiting_confirmation') ? 3000 : 5000;
+        let interval = trackedJobs.some(j => j.status === 'awaiting_confirmation') ? 2000 : 5000;
         pollingTimeout = setTimeout(pollJobStatuses, interval);
     }
 }
@@ -375,7 +375,7 @@ function renderJobItem(job) {
     }
     let actions = '';
     if (job.run_id) {
-        if (['in_progress', 'queued', 'awaiting_confirmation'].includes(job.status)) { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Hủy Job"><i class="fas fa-stop"></i></button>`; }
+        if (!['completed', 'error'].includes(job.status)) { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Hủy Job"><i class="fas fa-stop"></i></button>`; }
         if (job.status === 'completed') { actions += `<button data-job-temp-id="${job.tempId}" class="rerun-btn px-2 py-1 text-xs rounded bg-blue-600 text-white" title="Chạy lại"><i class="fas fa-redo"></i></button>`; }
         if (job.html_url) { actions += `<a href="${job.html_url}" target="_blank" class="px-2 py-1 text-xs rounded bg-gray-600 text-white" title="Xem trên GitHub"><i class="fab fa-github"></i></a>`; }
     }
@@ -388,13 +388,13 @@ function renderJobs() {
     el.jobListContainer.innerHTML = '';
 
     Object.keys(jobsByOwner).sort().forEach(owner => {
-        const isExpanded = jobsByOwner[owner].some(j => ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status));
+        const isExpanded = trackedJobs.some(j => j.owner === owner && !['completed', 'error'].includes(j.status));
         const ownerGroup = document.createElement('div');
         ownerGroup.className = 'card rounded-lg overflow-hidden';
         ownerGroup.innerHTML = `<div class="owner-header p-4 flex justify-between items-center cursor-pointer" data-owner="${owner}"><div class="font-bold text-lg">${owner}</div><div class="flex items-center gap-4"><span class="active-count bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full"></span><span class="total-count bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full"></span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}"></div>`;
         
         const jobs = jobsByOwner[owner].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
-        const activeJobCount = jobs.filter(j => ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)).length;
+        const activeJobCount = jobs.filter(j => !['completed', 'error'].includes(j.status)).length;
         
         ownerGroup.querySelector('.active-count').textContent = `${activeJobCount} Hoạt động`; ownerGroup.querySelector('.active-count').classList.toggle('hidden', activeJobCount === 0); ownerGroup.querySelector('.total-count').textContent = `${jobs.length} Tổng cộng`;
         
