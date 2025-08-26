@@ -183,8 +183,10 @@ code { background-color: rgba(128,128,128,0.2); color: var(--text-primary); padd
 <script>
 // --- Constants and State ---
 const REPO_NAME = 'ci-build-env'; const WORKFLOW_NAME = 'build.yml'; const MAX_JOBS_PER_TOKEN = 5;
+const ACTION_DELAY = 500; // Delay in ms between processing queue actions
 let trackedJobs = []; let pollingTimeout = null; let globalOwnerLogin = '';
 let apiCache = {}; // ETag cache for high-speed polling
+let actionQueue = []; let isProcessingQueue = false; // Queue system state
 
 // --- DOM Elements ---
 const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), quickCancelBtn: document.getElementById("quickCancelBtn"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon'), templateDescription: document.getElementById('template-description'), tokenHelpBtn: document.getElementById('token-help-btn'), tokenHelpModalOverlay: document.getElementById('token-help-modal-overlay'), tokenHelpModal: document.getElementById('token-help-modal'), tokenHelpCloseBtn: document.getElementById('token-help-close-btn'), tokenProtectCheckbox: document.getElementById('token-protect-checkbox'), generalHelpBtn: document.getElementById('general-help-btn'), generalHelpModalOverlay: document.getElementById('general-help-modal-overlay'), generalHelpModal: document.getElementById('general-help-modal'), generalHelpCloseBtn: document.getElementById('general-help-close-btn'), hiddenIframe: document.getElementById('hidden-iframe')};
@@ -262,8 +264,6 @@ async function githubApi(endpoint, token, options = {}) {
     }
     return responseBody;
 }
-const cancelWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/cancel`, t, { method: "POST" });
-const rerunWorkflow = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/rerun`, t, { method: "POST" });
 const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
 
 // --- Hybrid Polling Logic with Dynamic Speed & Accurate Matching ---
@@ -329,13 +329,19 @@ async function pollJobStatuses() {
                         if (activeRun) {
                             if (job.status !== activeRun.status) { job.status = activeRun.status; changed = true; }
                         } else {
-                            try {
+                             try {
                                 const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
                                 if (finalRunData && (job.status !== finalRunData.status || job.conclusion !== finalRunData.conclusion)) {
-                                    job.status = finalRunData.status; job.conclusion = finalRunData.conclusion; changed = true;
-                                    if (job.status === 'completed') { showDesktopNotification(`Job #${finalRunData.run_number} ${job.conclusion}`, `Deployment đã hoàn thành.`); }
+                                    job.status = finalRunData.status; 
+                                    job.conclusion = finalRunData.conclusion || 'unknown'; // Ensure conclusion is set
+                                    changed = true;
                                 }
-                            } catch (err) { console.warn(`Không thể lấy trạng thái cuối cùng cho job ${job.run_id}:`, err); job.status = 'completed'; job.conclusion = 'unknown'; changed = true; }
+                            } catch (err) { 
+                                console.warn(`Không thể lấy trạng thái cuối cùng cho job ${job.run_id}:`, err); 
+                                job.status = 'completed'; 
+                                job.conclusion = err.status === 404 ? 'failure' : 'unknown'; // Be more specific on 404
+                                changed = true; 
+                            }
                         }
                     }
                 } catch(e) { console.error(`Failed to monitor runs for owner ${owner}:`, e); }
@@ -367,12 +373,16 @@ async function showJobDetails(job) { el.modalTitle.textContent = `Chi tiết cho
 // --- Main Rendering ---
 function renderJobItem(job) {
     let sClass, sIcon, sText;
+    const conclusionText = (job.conclusion || '').replace(/_/g, ' ');
     switch(job.status) {
         case 'in_progress': sClass = 'status-running'; sIcon = 'fa-solid fa-gear fa-spin text-[var(--success-color)]'; sText = 'Job đang chạy'; break;
-        case 'completed': if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]'; sText = 'Thành công'; } else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]'; sText = job.conclusion || 'Thất bại'; } break;
+        case 'completed': 
+            if (job.conclusion === 'success') { sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]'; sText = 'Thành công'; } 
+            else { sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]'; sText = conclusionText.toUpperCase() || 'THẤT BẠI'; } 
+            break;
         case 'error': sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation text-[var(--warning-color)]'; sText = 'Lỗi'; break;
         case 'awaiting_confirmation': sClass = 'status-queued'; sIcon = 'fa-solid fa-satellite-dish fa-spin'; sText = 'Đang xác nhận'; break;
-        default: sClass = 'status-queued'; sIcon = 'fa-solid fa-clock fa-spin-pulse'; sText = 'Đang chờ'; break;
+        default: sClass = 'status-queued'; sIcon = 'fa-solid fa-clock fa-spin-pulse'; sText = job.status.replace(/_/g, ' ').toUpperCase() || 'ĐANG CHỜ'; break;
     }
     let actions = '';
     if (job.run_id) {
@@ -412,48 +422,115 @@ function renderJobs() {
     updateFavicon();
 }
 
-async function setupAndTriggerWorkflow(job, template, deployCmd, pin, repoUrl, withRerun) {
+// *** NEW: Action Queue System ***
+async function processActionQueue() {
+    if (isProcessingQueue || actionQueue.length === 0) {
+        if (!isProcessingQueue) { // Re-enable buttons if queue is truly empty
+            [el.runOnceBtn, el.run5Btn, el.run5WaitBtn].forEach(btn => btn.disabled = false);
+            el.runOnceBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Chạy 1 Job';
+            el.run5Btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Chạy 5 Job';
+            el.run5WaitBtn.innerHTML = '<i class="fas fa-history mr-2"></i> Chạy 5 Job (Tự lặp lại)';
+        }
+        return;
+    }
+    isProcessingQueue = true;
+
+    const action = actionQueue.shift();
+    const { type, payload } = action;
+
     try {
-        await githubApi(`/repos/${job.owner}/${REPO_NAME}`, job.token).catch(async (e) => {
-            if (e.status === 404) {
-                await githubApi("/user/repos", job.token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) });
-                showToast(`Repo ${REPO_NAME} đã được tạo (Public).`, 'info');
-            } else throw e;
-        });
+        switch (type) {
+            case 'CREATE_JOB':
+                await handleCreateJob(payload);
+                break;
+            case 'CANCEL_JOB':
+                await handleCancelJob(payload);
+                break;
+            case 'RERUN_JOB':
+                 await handleRerunJob(payload);
+                 break;
+        }
+    } catch (e) {
+        console.error(`Error processing action ${type}:`, e);
+    }
+    
+    setTimeout(() => {
+        isProcessingQueue = false;
+        processActionQueue();
+    }, ACTION_DELAY);
+}
 
-        const path = `.github/workflows/${WORKFLOW_NAME}`;
-        const url = `/repos/${job.owner}/${REPO_NAME}/contents/${path}`;
-        const content = getWorkflowContent(template, deployCmd, pin || '123456', repoUrl, withRerun);
-        const base64Content = btoa(unescape(encodeURIComponent(content)));
+// --- Individual Action Handlers for the Queue ---
+async function handleCreateJob(payload) {
+    const { token, owner, template, cmd, pin, repoUrl, withRerun, commit_sha } = payload;
+    
+    const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token };
+    trackedJobs.unshift(job);
+    renderJobs();
+    saveState();
 
-        let remoteFile;
-        try { remoteFile = await githubApi(url, job.token); } catch (e) { if (e.status !== 404) throw e; }
-        
-        const remoteBase64Content = remoteFile ? remoteFile.content.replace(/\s/g, '') : null;
-        let fileSha = remoteFile ? remoteFile.sha : null;
-        
-        if (!remoteFile || remoteBase64Content !== base64Content.replace(/\s/g, '')) {
-            const updateFileResponse = await githubApi(url, job.token, { method: "PUT", body: JSON.stringify({ message: `ci: Update build workflow`, content: base64Content, sha: fileSha || undefined }) });
-            job.commit_sha = updateFileResponse.commit.sha;
+    try {
+        if (!commit_sha) { // This is the first job in a batch, it needs to setup the workflow
+            await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(async (e) => {
+                if (e.status === 404) {
+                    await githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) });
+                } else throw e;
+            });
+
+            const path = `.github/workflows/${WORKFLOW_NAME}`;
+            const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
+            const content = getWorkflowContent(template, cmd, pin, repoUrl, withRerun);
+            const base64Content = btoa(unescape(encodeURIComponent(content)));
+
+            let remoteFile;
+            try { remoteFile = await githubApi(url, token); } catch (e) { if (e.status !== 404) throw e; }
+            
+            const remoteBase64Content = remoteFile ? remoteFile.content.replace(/\s/g, '') : null;
+            if (!remoteFile || remoteBase64Content !== base64Content.replace(/\s/g, '')) {
+                const updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Update build workflow`, content: base64Content, sha: remoteFile?.sha }) });
+                job.commit_sha = updateFileResponse.commit.sha;
+            } else {
+                const mainBranch = await githubApi(`/repos/${owner}/${REPO_NAME}/branches/main`, token);
+                job.commit_sha = mainBranch.commit.sha;
+            }
         } else {
-            const mainBranch = await githubApi(`/repos/${job.owner}/${REPO_NAME}/branches/main`, job.token);
-            job.commit_sha = mainBranch.commit.sha;
+            job.commit_sha = commit_sha; // Reuse SHA from the first job in the batch
         }
 
-        await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, job.token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
-        
-        showToast(`Đã kích hoạt build cho: ${job.owner}`, "success");
+        await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
         startPolling();
-        return { success: true, commit_sha: job.commit_sha };
     } catch (e) {
         job.status = 'error';
         job.name = 'Lỗi khởi tạo';
         job.errorMessage = e.message;
         renderJobs();
         saveState();
-        showToast(`Lỗi thiết lập cho ${job.owner}: ${e.message}`, 'error');
-        throw e;
+        showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error');
     }
+}
+
+async function handleCancelJob(payload) {
+    const { job } = payload;
+    try {
+        await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}/cancel`, job.token, { method: "POST" });
+        job.status = 'completed';
+        job.conclusion = 'cancelled';
+        renderJobs();
+        saveState();
+    } catch(err) {
+        showToast(`Lỗi khi hủy job #${job.run_id}: ${err.message}`, 'error');
+    }
+}
+
+async function handleRerunJob(payload) {
+     const { job } = payload;
+     try {
+        await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}/rerun`, job.token, { method: "POST" });
+        showToast(`Đã yêu cầu chạy lại job #${job.run_id}`, 'info');
+        startPolling();
+     } catch(err) {
+        showToast(`Lỗi khi chạy lại: ${err.message}`, 'error');
+     }
 }
 
 // --- Event Listeners ---
@@ -466,67 +543,61 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tokens.length === 0) { showToast("Vui lòng nhập ít nhất một GitHub token.", "error"); return; }
         const cmd = el.deployCmdInput.value; const pin = el.accessPinInput.value.trim(); const template = el.templateSelect.value; const repoUrl = el.customRepoUrl.value;
         if (template === 'crd-windows' && !cmd) { showToast("Vui lòng nhập Lệnh triển khai CRD.", "error"); return; }
-        const allBtns = [el.runOnceBtn, el.run5Btn, el.run5WaitBtn];
-        allBtns.forEach(btn => { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Đang gửi...'; });
         
-        const dispatchPromises = [];
+        const allBtns = [el.runOnceBtn, el.run5Btn, el.run5WaitBtn];
+        allBtns.forEach(btn => { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Đang xử lý...'; });
+        
         const tokensToUse = tokens.slice(0, 10);
+        let commitShaForBatch = null;
+
         for(const token of tokensToUse) {
-            const promise = (async () => {
-                let ownerData;
-                try { ownerData = await githubApi("/user", token); } catch (e) { showToast(`Token không hợp lệ, bỏ qua.`, "warning"); return; }
-                
-                const activeJobsForToken = trackedJobs.filter(j => j.owner === ownerData.login && ['awaiting_confirmation', 'queued', 'in_progress'].includes(j.status)).length;
-                let jobsToCreate = Math.max(0, Math.min(runsPerToken, MAX_JOBS_PER_TOKEN - activeJobsForToken));
-                if (jobsToCreate < runsPerToken) { showToast(`Token của ${ownerData.login} chỉ có thể tạo thêm ${jobsToCreate} job.`, 'info'); }
-                if (jobsToCreate === 0) return;
-                
-                // *** FIX: Create first job placeholder, then setup and trigger ***
-                const firstJob = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner: ownerData.login, token, errorMessage: null };
-                trackedJobs.unshift(firstJob);
-                renderJobs();
-                saveState();
+            let ownerData;
+            try { ownerData = await githubApi("/user", token); } 
+            catch (e) { showToast(`Token không hợp lệ, bỏ qua.`, "warning"); continue; }
+            
+            const activeJobsForToken = trackedJobs.filter(j => j.owner === ownerData.login && ['awaiting_confirmation', 'queued', 'in_progress'].includes(j.status)).length;
+            let jobsToCreate = Math.max(0, Math.min(runsPerToken, MAX_JOBS_PER_TOKEN - activeJobsForToken));
+            if (jobsToCreate < runsPerToken) { showToast(`Token của ${ownerData.login} chỉ có thể tạo thêm ${jobsToCreate} job.`, 'info'); }
 
-                let firstDispatchResult;
-                try {
-                    firstDispatchResult = await setupAndTriggerWorkflow(firstJob, template, cmd, pin, repoUrl, withRerun);
-                } catch(e) { return; } // Error is handled inside the function
-
-                jobsToCreate--; 
-                
-                if (jobsToCreate > 0) {
-                    const commit_sha = firstDispatchResult.commit_sha;
-                    for(let i = 0; i < jobsToCreate; i++) {
-                        await new Promise(resolve => setTimeout(resolve, 250)); 
-                        const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, commit_sha, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner: ownerData.login, token, errorMessage: null };
-                        trackedJobs.unshift(job);
-                        renderJobs();
-                        try {
-                            await githubApi(`/repos/${ownerData.login}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
-                        } catch (e) {
-                            const failedJob = trackedJobs.find(j => j.tempId === job.tempId);
-                            if (failedJob) {
-                                failedJob.status = 'error'; failedJob.name = 'Lỗi khởi tạo'; failedJob.errorMessage = `Dispatch failed: ${e.message}`;
-                                renderJobs(); saveState();
-                            }
-                            showToast(`Lỗi dispatch cho ${ownerData.login}: ${e.message}`, 'error');
-                        }
-                    }
-                }
-            })();
-            dispatchPromises.push(promise);
+            for (let i = 0; i < jobsToCreate; i++) {
+                actionQueue.push({ type: 'CREATE_JOB', payload: { token, owner: ownerData.login, template, cmd, pin, repoUrl, withRerun, commit_sha: i > 0 ? commitShaForBatch : null }});
+            }
         }
         
-        await Promise.allSettled(dispatchPromises);
-        if (template === 'crd-windows' && dispatchPromises.length > 0) el.deployCmdInput.value = '';
-        allBtns.forEach(btn => btn.disabled = false); el.runOnceBtn.innerHTML = '<i class="fas fa-play mr-2"></i> Chạy 1 Job'; el.run5Btn.innerHTML = '<i class="fas fa-rocket mr-2"></i> Chạy 5 Job'; el.run5WaitBtn.innerHTML = '<i class="fas fa-history mr-2"></i> Chạy 5 Job (Tự lặp lại)';
+        processActionQueue();
+        if (template === 'crd-windows') el.deployCmdInput.value = '';
     }
 
     el.runOnceBtn.addEventListener('click', () => handleDeployClick(1)); el.run5Btn.addEventListener('click', () => handleDeployClick(5)); el.run5WaitBtn.addEventListener('click', () => handleDeployClick(5, true));
     el.selectAllCheckbox.addEventListener('change', () => { const isChecked = el.selectAllCheckbox.checked; document.querySelectorAll('.job-checkbox').forEach(box => box.checked = isChecked); document.querySelectorAll('.job-item').forEach(item => item.classList.toggle('selected', isChecked)); });
-    el.deleteSelectedBtn.addEventListener('click', async () => { const checkedBoxes = document.querySelectorAll('.job-checkbox:checked'); if (checkedBoxes.length === 0) { showToast("Vui lòng chọn ít nhất một job để xóa/hủy.", "info"); return; } const tempIdsToDelete = Array.from(checkedBoxes).map(box => box.dataset.jobTempId); const jobsToDelete = trackedJobs.filter(job => tempIdsToDelete.includes(job.tempId)); const activeJobsToCancel = jobsToDelete.filter(j => j.run_id && ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)); if (confirm(`Bạn có chắc muốn xóa ${jobsToDelete.length} job đã chọn? ${activeJobsToCancel.length > 0 ? `Trong đó, ${activeJobsToCancel.length} job đang hoạt động sẽ bị hủy.` : ''}`)) { if (activeJobsToCancel.length > 0) { showToast(`Đang hủy ${activeJobsToCancel.length} job...`, 'info'); const promises = activeJobsToCancel.map(job => cancelWorkflow(job.token, job.owner, job.run_id).catch(err => console.error(`Không thể hủy job ${job.run_id}:`, err))); await Promise.allSettled(promises); } trackedJobs = trackedJobs.filter(job => !tempIdsToDelete.includes(job.tempId)); renderJobs(); saveState(); showToast(`${jobsToDelete.length} job đã được xử lý.`, 'success'); } });
-    async function quickCancelAll() { const activeJobs = trackedJobs.filter(j => j.run_id && ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)); if (activeJobs.length === 0) { showToast("Không có job nào đang hoạt động để hủy.", "info"); return; } showToast(`Đang gửi yêu cầu hủy cho ${activeJobs.length} job...`, 'info'); const promises = activeJobs.map(job => cancelWorkflow(job.token, job.owner, job.run_id).catch(err => showToast(`Lỗi khi hủy job #${job.run_id}: ${err.message}`, 'error'))); await Promise.allSettled(promises); showToast(`${activeJobs.length} yêu cầu hủy đã được gửi.`, 'success'); startPolling(); }
+    
+    el.deleteSelectedBtn.addEventListener('click', async () => { 
+        const checkedBoxes = document.querySelectorAll('.job-checkbox:checked'); 
+        if (checkedBoxes.length === 0) { showToast("Vui lòng chọn ít nhất một job để xóa/hủy.", "info"); return; } 
+        const tempIdsToDelete = Array.from(checkedBoxes).map(box => box.dataset.jobTempId); 
+        const jobsToDelete = trackedJobs.filter(job => tempIdsToDelete.includes(job.tempId)); 
+        const activeJobsToCancel = jobsToDelete.filter(j => j.run_id && ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)); 
+        if (confirm(`Bạn có chắc muốn xóa ${jobsToDelete.length} job đã chọn? ${activeJobsToCancel.length > 0 ? `Trong đó, ${activeJobsToCancel.length} job đang hoạt động sẽ bị hủy.` : ''}`)) {
+            if (activeJobsToCancel.length > 0) {
+                showToast(`Đã thêm ${activeJobsToCancel.length} lệnh hủy vào hàng đợi...`, 'info');
+                activeJobsToCancel.forEach(job => actionQueue.push({ type: 'CANCEL_JOB', payload: { job }}));
+                processActionQueue();
+            }
+            trackedJobs = trackedJobs.filter(job => !tempIdsToDelete.includes(job.tempId)); 
+            renderJobs(); saveState(); 
+            showToast(`${jobsToDelete.length} job đã được xử lý.`, 'success'); 
+        } 
+    });
+
+    async function quickCancelAll() { 
+        const activeJobs = trackedJobs.filter(j => j.run_id && ['queued', 'in_progress', 'awaiting_confirmation'].includes(j.status)); 
+        if (activeJobs.length === 0) { showToast("Không có job nào đang hoạt động để hủy.", "info"); return; } 
+        showToast(`Đã thêm ${activeJobs.length} lệnh hủy vào hàng đợi...`, 'info');
+        activeJobs.forEach(job => actionQueue.push({ type: 'CANCEL_JOB', payload: { job }}));
+        processActionQueue();
+    }
     el.quickCancelBtn.addEventListener('click', quickCancelAll);
+
     el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Đang làm mới trạng thái..."); apiCache = {}; await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
     el.clearHistoryBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build? Hành động này không thể hoàn tác.')) { trackedJobs = []; saveState(); renderJobs(); showToast('Lịch sử đã được xóa.', 'info'); } });
     el.themeToggleBtn.addEventListener('click', () => { const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
@@ -537,9 +608,24 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.matches('.job-checkbox, .job-checkbox *')) { jobItemElement.classList.toggle('selected', e.target.closest('.job-checkbox').checked); const allBoxes = document.querySelectorAll('.job-checkbox'); const checkedBoxes = document.querySelectorAll('.job-checkbox:checked'); el.selectAllCheckbox.checked = allBoxes.length > 0 && allBoxes.length === checkedBoxes.length; return; }
         const cancelBtn = e.target.closest('.cancel-btn'); const rerunBtn = e.target.closest('.rerun-btn');
         if (!job.run_id) { if (cancelBtn || rerunBtn) showToast("Job chưa có ID từ GitHub, vui lòng chờ.", "warning"); return; }
-        if (cancelBtn) { e.stopPropagation(); if (confirm(`Bạn có chắc muốn hủy job #${job.run_id} của user ${job.owner}?`)) { showToast('Đang hủy job...', 'info'); try { await cancelWorkflow(job.token, job.owner, job.run_id); showToast('Đã gửi yêu cầu hủy.', 'success'); job.status = 'completed'; job.conclusion = 'cancelled'; renderJobs(); saveState(); } catch (err) { showToast(`Lỗi khi hủy: ${err.message}`, 'error');} } }
-        else if (rerunBtn) { e.stopPropagation(); try { await rerunWorkflow(job.token, job.owner, job.run_id); showToast('Đang yêu cầu chạy lại job...', 'info'); startPolling(); } catch (err) { showToast(`Lỗi khi chạy lại: ${err.message}`, 'error'); } }
-        else if (e.target.closest('.job-item-clickable')) { showJobDetails(job); }
+        
+        if (cancelBtn) { 
+            e.stopPropagation(); 
+            if (confirm(`Bạn có chắc muốn hủy job #${job.run_id} của user ${job.owner}?`)) {
+                actionQueue.push({ type: 'CANCEL_JOB', payload: { job }});
+                processActionQueue();
+                showToast('Đã thêm lệnh hủy vào hàng đợi...', 'info');
+            }
+        }
+        else if (rerunBtn) { 
+            e.stopPropagation(); 
+            actionQueue.push({ type: 'RERUN_JOB', payload: { job }});
+            processActionQueue();
+            showToast('Đã thêm lệnh chạy lại vào hàng đợi...', 'info');
+        }
+        else if (e.target.closest('.job-item-clickable')) { 
+            showJobDetails(job); 
+        }
     });
 
     el.jobListContainer.addEventListener('click', e => { const header = e.target.closest('.owner-header'); if(header) { const owner = header.dataset.owner; const content = el.jobListContainer.querySelector(`.owner-jobs-content[data-owner="${owner}"]`); content.classList.toggle('hidden'); header.querySelector('.chevron-icon').classList.toggle('fa-chevron-up'); header.querySelector('.chevron-icon').classList.toggle('fa-chevron-down'); }});
