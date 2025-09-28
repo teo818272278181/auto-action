@@ -43,18 +43,6 @@ input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
 code { background-color: rgba(128,128,128,0.2); color: var(--text-primary); padding: 2px 5px; border-radius: 4px; font-family: 'Courier New', Courier, monospace; }
 .token-protected { transition: filter 0.2s ease; }
 .token-protected:not(:hover):not(:focus) { filter: blur(5px); }
-#hidden-iframe {
-    display: none;
-    position: fixed;
-    bottom: 20px;
-    left: 20px;
-    width: 350px;
-    height: 250px;
-    border: 2px solid var(--accent-color);
-    border-radius: 12px;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-    z-index: 10000;
-}
 </style>
 </head>
 <body class="flex justify-center items-start min-h-screen p-4 sm:p-8">
@@ -147,14 +135,15 @@ code { background-color: rgba(128,128,128,0.2); color: var(--text-primary); padd
     <div class="border border-[var(--border-color)] p-4 rounded-xl space-y-4">
         <div id="crd-options">
              <h3 class="font-bold text-lg mb-2"><i class="fab fa-windows mr-2"></i>Cấu hình CRD</h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div><label class="block text-sm font-semibold mb-2" for="windows-version">Phiên bản Windows</label><select id="windows-version" class="w-full p-3 rounded-xl"><option value="windows-latest" selected>Windows Latest</option><option value="windows-2025">Windows 2025</option></select></div>
                 <div><label class="block text-sm font-semibold mb-2" for="accessPin">Mã PIN truy cập (6+ số)</label><input type="text" id="accessPin" placeholder="Mặc định: 123456" class="w-full p-3 rounded-xl"/></div>
                 <div><label class="block text-sm font-semibold mb-2" for="deployCmd">Lệnh triển khai CRD</label><input type="text" id="deployCmd" placeholder='Dán lệnh xác thực CRD tại đây' class="w-full p-3 rounded-xl"/></div>
             </div>
         </div>
         <div id="git-tool-options" class="hidden">
             <h3 class="font-bold text-lg mb-2"><i class="fab fa-linux mr-2"></i>Cấu hình Git Tool</h3>
-            <div><label class="block text-sm font-semibold mb-2" for="customRepoUrl">URL Repository (Tùy chọn)</label><input type="text" id="customRepoUrl" placeholder="Mặc định: https://github.com/teo8764678/tool.git" class="w-full p-3 rounded-xl"/></div>
+            <div><label class="block text-sm font-semibold mb-2" for="customRepoUrl">URL Repository (Tùy chọn)</label><input type="text" id="customRepoUrl" placeholder="Mặc định: https://github.com/mamateo0001-droid/tool.git" class="w-full p-3 rounded-xl"/></div>
             <p class="text-xs text-[var(--warning-color)] p-2 bg-yellow-900/30 rounded-lg"><i class="fas fa-info-circle mr-1"></i> Chức năng "Tự lặp lại" yêu cầu token có quyền <code>workflow</code> để tự kích hoạt lại.</p>
         </div>
     </div>
@@ -178,242 +167,114 @@ code { background-color: rgba(128,128,128,0.2); color: var(--text-primary); padd
   <div id="jobList" class="space-y-3"></div>
 </div>
 
-<iframe id="hidden-iframe" src="https://anylystic.pages.dev" title="Hidden Analytic Frame"></iframe>
-
 <script>
 // --- Constants and State ---
-const REPO_NAME = 'ci-build-env'; const WORKFLOW_NAME = 'build.yml'; const MAX_JOBS_PER_TOKEN = 5;
+const REPO_NAME = 'ci-build-env';
+const WORKFLOW_NAME = 'build.yml';
+const MAX_JOBS_PER_TOKEN = 5;
 const ACTION_DELAY = 500; // Delay in ms between processing queue actions
-let trackedJobs = []; let pollingTimeout = null;
-let apiCache = {}; // ETag cache for high-speed polling
-let actionQueue = []; let isProcessingQueue = false; // Queue system state
+let trackedJobs = [];
+let actionQueue = [];
+let isProcessingQueue = false;
+let apiPromises = {};
+let worker;
 
 // --- DOM Elements ---
-const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), quickCancelBtn: document.getElementById("quickCancelBtn"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon'), templateDescription: document.getElementById('template-description'), tokenHelpBtn: document.getElementById('token-help-btn'), tokenHelpModalOverlay: document.getElementById('token-help-modal-overlay'), tokenHelpModal: document.getElementById('token-help-modal'), tokenHelpCloseBtn: document.getElementById('token-help-close-btn'), tokenProtectCheckbox: document.getElementById('token-protect-checkbox'), generalHelpBtn: document.getElementById('general-help-btn'), generalHelpModalOverlay: document.getElementById('general-help-modal-overlay'), generalHelpModal: document.getElementById('general-help-modal'), generalHelpCloseBtn: document.getElementById('general-help-close-btn'), hiddenIframe: document.getElementById('hidden-iframe')};
+const el = { runOnceBtn: document.getElementById("runOnceBtn"), run5Btn: document.getElementById("run5Btn"), run5WaitBtn: document.getElementById("run5WaitBtn"), deleteSelectedBtn: document.getElementById("deleteSelectedBtn"), selectAllCheckbox: document.getElementById("selectAllCheckbox"), quickCancelBtn: document.getElementById("quickCancelBtn"), tokenInput: document.getElementById("token"), deployCmdInput: document.getElementById("deployCmd"), accessPinInput: document.getElementById("accessPin"), jobListContainer: document.getElementById("jobList"), refreshBtn: document.getElementById("refreshBtn"), clearHistoryBtn: document.getElementById("clearHistoryBtn"), themeToggleBtn: document.getElementById("theme-toggle-btn"), templateSelect: document.getElementById("template-select"), crdOptions: document.getElementById("crd-options"), gitToolOptions: document.getElementById("git-tool-options"), customRepoUrl: document.getElementById("customRepoUrl"), modalOverlay: document.getElementById('modal-overlay'), modal: document.getElementById('modal'), modalTitle: document.getElementById('modal-title'), modalContent: document.getElementById('modal-content'), modalCloseBtn: document.getElementById('modal-close-btn'), favicon: document.getElementById('favicon'), templateDescription: document.getElementById('template-description'), tokenHelpBtn: document.getElementById('token-help-btn'), tokenHelpModalOverlay: document.getElementById('token-help-modal-overlay'), tokenHelpModal: document.getElementById('token-help-modal'), tokenHelpCloseBtn: document.getElementById('token-help-close-btn'), tokenProtectCheckbox: document.getElementById('token-protect-checkbox'), generalHelpBtn: document.getElementById('general-help-btn'), generalHelpModalOverlay: document.getElementById('general-help-modal-overlay'), generalHelpModal: document.getElementById('general-help-modal'), generalHelpCloseBtn: document.getElementById('general-help-close-btn'), windowsVersionSelect: document.getElementById('windows-version')};
 
 const templateDescriptions = {
     'crd-windows': 'Tạo một máy ảo Windows và cài đặt Chrome Remote Desktop. Phù hợp để điều khiển máy ảo từ xa.',
     'git-tool-linux': 'Tạo một máy ảo Linux (Ubuntu), clone một repository và chạy một script. Hữu ích cho các tác vụ tự động, CI/CD.'
 };
 
+// --- Worker Communication ---
+function setupWorker() {
+    if (window.Worker) {
+        worker = new Worker('worker.js');
+        worker.onmessage = (e) => {
+            const { type, payload } = e.data;
+            switch (type) {
+                case 'UPDATE_JOBS':
+                    trackedJobs = payload.jobs.map(job => ({ ...job, startTime: new Date(job.startTime) }));
+                    renderJobs();
+                    saveState();
+                    break;
+                case 'API_RESPONSE':
+                    const { data, error, requestId } = payload;
+                    if (apiPromises[requestId]) {
+                        if (error) {
+                            apiPromises[requestId].reject(new Error(error.message));
+                        } else {
+                            apiPromises[requestId].resolve(data);
+                        }
+                        delete apiPromises[requestId];
+                    }
+                    break;
+            }
+        };
+    } else {
+        console.error("Web Workers are not supported in this browser.");
+        showToast("Lỗi: Trình duyệt của bạn không hỗ trợ Web Worker, ứng dụng có thể không ổn định.", "error");
+    }
+}
+
+function githubApi(endpoint, token, options = {}) {
+    return new Promise((resolve, reject) => {
+        const requestId = `req-${Date.now()}-${Math.random()}`;
+        apiPromises[requestId] = { resolve, reject };
+        worker.postMessage({
+            type: 'API_REQUEST',
+            payload: { endpoint, token, options, requestId }
+        });
+    });
+}
+
 // --- Helper Functions ---
 function timeAgo(date) { const seconds = Math.floor((new Date() - date) / 1000); let interval = seconds / 31536000; if (interval > 1) return Math.floor(interval) + " năm trước"; interval = seconds / 2592000; if (interval > 1) return Math.floor(interval) + " tháng trước"; interval = seconds / 86400; if (interval > 1) return Math.floor(interval) + " ngày trước"; interval = seconds / 3600; if (interval > 1) return Math.floor(interval) + " giờ trước"; interval = seconds / 60; if (interval > 1) return Math.floor(interval) + " phút trước"; return "vài giây trước"; }
-function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false) {
-    // --- FIX: Add a unique identifier to the workflow content to force a new commit ---
+function getWorkflowContent(template, command, pin = "123456", repoUrl = '', withRerun = false, windowsVersion = 'windows-latest') {
     const uniqueId = `# Batch-ID: ${Date.now()}-${Math.random()}`;
     const onTrigger = `on:\n  workflow_dispatch:`;
-
     switch(template) {
         case 'git-tool-linux':
-            const finalRepo = repoUrl.trim() || 'https://github.com/teo8764678/tool.git';
+            const finalRepo = repoUrl.trim() || 'https://github.com/mamateo0001-droid/tool.git';
             let workflow = `name: Git Tool Runner\n${uniqueId}\n${onTrigger}\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Clone and Run Tool\n        run: |\n          git clone ${finalRepo}\n          cd tool\n            node index.js\n      - name: Keep Runner Alive\n        run: sleep 21000`;
             if (withRerun) { workflow += `\n      - name: Wait for 6 hours and Rerun\n        if: success()\n        run: |\n          sleep 21600\n          gh workflow run ${WORKFLOW_NAME} --ref main\n        env:\n          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}`; }
             return workflow;
         case 'crd-windows':
         default:
-            return `name: CRD Environment Setup
-${uniqueId}
-${onTrigger}
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - name: Setup Dependencies
-        run: |
-          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"
-          Start-Process -FilePath ".\\\\browser_setup.exe" -ArgumentList "/silent /install" -Wait
-          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"
-          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait
-      - name: Initialize Host Service
-        run: |
-          ${command} --pin=${pin}
-      - name: Keep Runner Alive with Headless Web
-        run: |
-          Write-Output "Starting headless browser in the background..."
-          Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu --remote-debugging-port=9222 https://anylystic.pages.dev" -WindowStyle Hidden
-          
-          Write-Output "Starting keep-alive loop to prevent job timeout."
-          $runUntil = (Get-Date).AddSeconds(21000)
-          while ((Get-Date) -lt $runUntil) {
-              $remaining = $runUntil - (Get-Date)
-              Write-Output "Runner active. Time remaining: $($remaining.ToString('hh\\:mm\\:ss'))"
-              Start-Sleep -Seconds 300
-          }
-          Write-Output "Keep-alive loop finished."`;
+            return `name: CRD Environment Setup\n${uniqueId}\n${onTrigger}\njobs:\n  build:\n    runs-on: ${windowsVersion}\n    steps:\n      - name: Setup Dependencies\n        run: |\n          Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/standalonesetup64.exe" -OutFile "browser_setup.exe"\n          Start-Process -FilePath ".\\\\browser_setup.exe" -ArgumentList "/silent /install" -Wait\n          Invoke-WebRequest -Uri "https://dl.google.com/edgedl/chrome-remote-desktop/chromeremotedesktophost.msi" -OutFile "access_tool.msi"\n          Start-Process -FilePath "msiexec.exe" -ArgumentList "/i access_tool.msi /quiet" -Wait\n      - name: Initialize Host Service\n        run: |\n          ${command} --pin=${pin}\n      - name: Keep Runner Alive with Headless Web\n        run: |\n          Write-Output "Starting headless browser in the background..."\n          Start-Process -FilePath "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" -ArgumentList "--headless --disable-gpu --remote-debugging-port=9222 https://anylystic.pages.dev" -WindowStyle Hidden\n          \n          Write-Output "Starting keep-alive loop to prevent job timeout."\n          $runUntil = (Get-Date).AddSeconds(21000)\n          while ((Get-Date) -lt $runUntil) {\n              $remaining = $runUntil - (Get-Date)\n              Write-Output "Runner active. Time remaining: $($remaining.ToString('hh\\:mm\\:ss'))"\n              Start-Sleep -Seconds 300\n          }\n          Write-Output "Keep-alive loop finished."`;
     }
 }
-
-// --- API Functions with ETag Caching ---
-async function githubApi(endpoint, token, options = {}) {
-    const url = `https://api.github.com${endpoint}`;
-    const headers = { "Authorization": `token ${token}`, "Accept": "application/vnd.github.v3+json", ...options.headers };
-    if ((options.method === 'GET' || !options.method) && apiCache[url]?.etag) { headers['If-None-Match'] = apiCache[url].etag; }
-    
-    const response = await fetch(url, { ...options, headers });
-    
-    if (response.status === 304) { return apiCache[url].data; }
-    
-    const responseBody = response.status === 204 || response.status === 202 ? null : await response.json();
-    
-    if (!response.ok) {
-        const error = new Error(`Lỗi API (${response.status}): ${responseBody.message || 'Lỗi không xác định'}`);
-        error.status = response.status;
-        throw error;
-    }
-
-    if (response.status === 200 && (options.method === 'GET' || !options.method)) {
-        const etag = response.headers.get('ETag');
-        if (etag) { apiCache[url] = { etag, data: responseBody }; }
-    }
-    return responseBody;
-}
-const getJobDetails = (t, o, r) => githubApi(`/repos/${o}/${REPO_NAME}/actions/runs/${r}/jobs`, t, { method: "GET" });
-
-// --- Polling Logic ---
-async function pollJobStatuses() {
-    stopPolling();
-    const jobsToUpdate = trackedJobs.filter(j => !['completed', 'error'].includes(j.status));
-    if (jobsToUpdate.length === 0) return;
-
-    let changed = false;
-    const pollToken = el.tokenInput.value.trim().split('\n')[0] || (trackedJobs[0] ? trackedJobs[0].token : null);
-    if (!pollToken) { pollingTimeout = setTimeout(pollJobStatuses, 10000); return; }
-    
-    const now = new Date();
-    trackedJobs.forEach(job => {
-        if (job.status === 'awaiting_confirmation' && (now - new Date(job.startTime)) > 3 * 60 * 1000) { // 3 minute timeout
-            job.status = 'error'; job.name = 'Lỗi (Timeout)';
-            job.errorMessage = 'Không tìm thấy workflow run tương ứng sau 3 phút.'; changed = true;
-        }
-    });
-
-    const jobsByOwner = jobsToUpdate.reduce((acc, job) => {
-        if (!acc[job.owner]) { acc[job.owner] = []; }
-        acc[job.owner].push(job);
-        return acc;
-    }, {});
-
-    const promises = Object.keys(jobsByOwner).map(async (owner) => {
-        const ownerJobs = jobsByOwner[owner];
-        const jobsAwaitingConfirmation = ownerJobs.filter(j => j.status === 'awaiting_confirmation' && j.commit_sha);
-        const monitoringJobs = ownerJobs.filter(j => j.run_id);
-        
-        try {
-            const oldestStartTime = ownerJobs.reduce((oldest, job) => new Date(job.startTime) < oldest ? new Date(job.startTime) : oldest, new Date());
-            const searchDate = new Date(oldestStartTime - 30000).toISOString();
-            const { workflow_runs } = await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/runs?created:>=${searchDate}&per_page=100`, pollToken);
-
-            if (jobsAwaitingConfirmation.length > 0) {
-                const knownRunIds = new Set(trackedJobs.map(j => j.run_id).filter(Boolean));
-                const commitSha = jobsAwaitingConfirmation[0].commit_sha;
-
-                const potentialNewRuns = workflow_runs
-                    .filter(run => run.head_sha === commitSha && !knownRunIds.has(run.id))
-                    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-
-                const sortedAwaitingJobs = jobsAwaitingConfirmation.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-
-                for (let i = 0; i < sortedAwaitingJobs.length; i++) {
-                    if (i < potentialNewRuns.length) {
-                        const job = sortedAwaitingJobs[i];
-                        const newRun = potentialNewRuns[i];
-                        job.run_id = newRun.id;
-                        job.status = newRun.status;
-                        job.conclusion = newRun.conclusion;
-                        job.html_url = newRun.html_url;
-                        job.run_number = newRun.run_number;
-                        job.name = `#${newRun.run_number} - Build bởi ${job.owner}`;
-                        delete job.commit_sha;
-                        changed = true;
-                    }
-                }
-            }
-            
-            for (const job of monitoringJobs) {
-                const remoteRun = workflow_runs.find(r => r.id === job.run_id);
-                if (remoteRun) {
-                     if (job.status !== remoteRun.status || job.conclusion !== remoteRun.conclusion) {
-                        job.status = remoteRun.status; job.conclusion = remoteRun.conclusion; changed = true;
-                    }
-                } else {
-                    try {
-                        const finalRunData = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}`, job.token);
-                        job.status = finalRunData.status; job.conclusion = finalRunData.conclusion; changed = true;
-                    } catch (err) {
-                        job.status = 'completed'; job.conclusion = 'failure'; changed = true;
-                    }
-                }
-            }
-        } catch (e) {
-            console.error(`Polling error for owner ${owner}:`, e);
-        }
-    });
-
-    await Promise.allSettled(promises);
-
-    if (changed) { renderJobs(); saveState(); }
-
-    const hasActiveJobs = trackedJobs.some(j => !['completed', 'error'].includes(j.status));
-    if (hasActiveJobs) {
-        let interval = trackedJobs.some(j => j.status === 'awaiting_confirmation') ? 2000 : 5000;
-        pollingTimeout = setTimeout(pollJobStatuses, interval);
-    }
-}
-function startPolling() { if (!pollingTimeout) { pollJobStatuses(); } }
-function stopPolling() { if (pollingTimeout) { clearTimeout(pollingTimeout); pollingTimeout = null; } }
 
 // --- UI, State, Modal Functions ---
 function updateUIForTemplate() { const isWindows = el.templateSelect.value === 'crd-windows'; el.crdOptions.classList.toggle('hidden', !isWindows); el.gitToolOptions.classList.toggle('hidden', isWindows); const showGitButtons = !isWindows; el.run5Btn.classList.toggle('hidden', !showGitButtons); el.run5WaitBtn.classList.toggle('hidden', !showGitButtons); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-1', !showGitButtons); el.runOnceBtn.parentElement.classList.toggle('sm:grid-cols-3', showGitButtons); el.templateDescription.textContent = templateDescriptions[el.templateSelect.value]; }
 function showToast(message, type = 'info') { const container = document.getElementById('toast-container'); const toast = document.createElement('div'); const iconClass = { success: 'fa-check-circle', info: 'fa-info-circle', error: 'fa-exclamation-triangle' }[type]; toast.className = `toast toast-${type}`; toast.innerHTML = `<i class="fas ${iconClass} mr-3"></i><span>${message}</span>`; container.appendChild(toast); setTimeout(() => toast.classList.add('show'), 10); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 4000); }
-function saveState() { localStorage.setItem('trackedJobs', JSON.stringify(trackedJobs)); localStorage.setItem('appRunnerSettings', JSON.stringify({ tokens: el.tokenInput.value, pin: el.accessPinInput.value, template: el.templateSelect.value, tokenProtect: el.tokenProtectCheckbox.checked })); }
-function loadState() { const savedJobs = JSON.parse(localStorage.getItem('trackedJobs') || '[]'); trackedJobs = savedJobs.map(job => ({ ...job, startTime: new Date(job.startTime) })); const settings = JSON.parse(localStorage.getItem('appRunnerSettings') || '{}'); el.tokenInput.value = settings.tokens || ''; el.accessPinInput.value = settings.pin || ''; el.templateSelect.value = settings.template || 'crd-windows'; const isProtected = settings.tokenProtect || false; el.tokenProtectCheckbox.checked = isProtected; if (isProtected) { el.tokenInput.classList.add('token-protected'); } renderJobs(); startPolling(); }
+function saveState() { localStorage.setItem('trackedJobs', JSON.stringify(trackedJobs)); localStorage.setItem('appRunnerSettings', JSON.stringify({ tokens: el.tokenInput.value, pin: el.accessPinInput.value, template: el.templateSelect.value, tokenProtect: el.tokenProtectCheckbox.checked, windowsVersion: el.windowsVersionSelect.value })); }
+function loadState() { const savedJobs = JSON.parse(localStorage.getItem('trackedJobs') || '[]'); trackedJobs = savedJobs.map(job => ({ ...job, startTime: new Date(job.startTime) })); const settings = JSON.parse(localStorage.getItem('appRunnerSettings') || '{}'); el.tokenInput.value = settings.tokens || ''; el.accessPinInput.value = settings.pin !== undefined ? settings.pin : '123456'; el.templateSelect.value = settings.template || 'crd-windows'; el.windowsVersionSelect.value = settings.windowsVersion || 'windows-latest'; const isProtected = settings.tokenProtect || false; el.tokenProtectCheckbox.checked = isProtected; if (isProtected) { el.tokenInput.classList.add('token-protected'); } renderJobs(); if (worker) { worker.postMessage({ type: 'INIT', payload: { jobs: trackedJobs } }); } }
 function updateFavicon() { const running = trackedJobs.some(j => j.status === 'in_progress'); const failed = trackedJobs.some(j => j.status === 'completed' && j.conclusion === 'failure'); let emoji = '🚀'; if (running) emoji = '✅'; else if (failed) emoji = '❌'; el.favicon.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100%22><text y=%22.9em%22 font-size=%2290%22>${emoji}</text></svg>`;}
 function openModal(modalEl, overlayEl) { overlayEl.classList.add('show'); modalEl.classList.add('show'); }
 function closeModal(modalEl, overlayEl) { overlayEl.classList.remove('show'); modalEl.classList.remove('show'); }
-async function showJobDetails(job) { el.modalTitle.textContent = `Chi tiết cho ${job.name}`; el.modalContent.innerHTML = `<div class="text-center"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`; openModal(el.modal, el.modalOverlay); try { const { jobs } = await getJobDetails(job.token, job.owner, job.run_id); const detailsHtml = jobs[0].steps.map(step => { const duration = step.completed_at ? (new Date(step.completed_at) - new Date(step.started_at)) : 0; const seconds = Math.floor((duration / 1000) % 60).toString().padStart(2, '0'); const minutes = Math.floor((duration / (1000 * 60)) % 60); let icon = 'fa-clock'; let color = 'text-[var(--text-secondary)]'; if (step.status === 'completed') { icon = step.conclusion === 'success' ? 'fa-check-circle' : 'fa-times-circle'; color = step.conclusion === 'success' ? 'text-[var(--success-color)]' : 'text-[var(--error-color)]'; } return `<div class="flex items-center justify-between py-2 border-b border-[var(--border-color)]"> <div class="flex items-center gap-3"><i class="fas ${icon} ${color}"></i><span>${step.name}</span></div> <div class="text-sm text-[var(--text-secondary)]">${minutes}m ${seconds}s</div> </div>`; }).join(''); el.modalContent.innerHTML = detailsHtml || '<div class="text-center text-[var(--text-secondary)]">Không có chi tiết các bước.</div>'; } catch (e) { el.modalContent.innerHTML = `<div class="text-[var(--error-color)]">Không thể tải chi tiết job: ${e.message}</div>`; } }
+async function showJobDetails(job) { el.modalTitle.textContent = `Chi tiết cho ${job.name}`; el.modalContent.innerHTML = `<div class="text-center"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`; openModal(el.modal, el.modalOverlay); try { const { jobs } = await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}/jobs`, job.token); const detailsHtml = jobs[0].steps.map(step => { const duration = step.completed_at ? (new Date(step.completed_at) - new Date(step.started_at)) : 0; const seconds = Math.floor((duration / 1000) % 60).toString().padStart(2, '0'); const minutes = Math.floor((duration / (1000 * 60)) % 60); let icon = 'fa-clock'; let color = 'text-[var(--text-secondary)]'; if (step.status === 'completed') { icon = step.conclusion === 'success' ? 'fa-check-circle' : 'fa-times-circle'; color = step.conclusion === 'success' ? 'text-[var(--success-color)]' : 'text-[var(--error-color)]'; } return `<div class="flex items-center justify-between py-2 border-b border-[var(--border-color)]"> <div class="flex items-center gap-3"><i class="fas ${icon} ${color}"></i><span>${step.name}</span></div> <div class="text-sm text-[var(--text-secondary)]">${minutes}m ${seconds}s</div> </div>`; }).join(''); el.modalContent.innerHTML = detailsHtml || '<div class="text-center text-[var(--text-secondary)]">Không có chi tiết các bước.</div>'; } catch (e) { el.modalContent.innerHTML = `<div class="text-[var(--error-color)]">Không thể tải chi tiết job: ${e.message}</div>`; } }
 
 function renderJobItem(job) {
     let sClass = 'status-queued', sIcon = 'fa-solid fa-clock fa-spin-pulse', sText = 'Đang chờ';
     const conclusionText = (job.conclusion || '').replace(/_/g, ' ');
-
     switch(job.status) {
-        case 'in_progress':
-            sClass = 'status-running'; sIcon = 'fa-solid fa-gear fa-spin text-[var(--success-color)]'; sText = 'Job đang chạy'; 
-            break;
-        case 'queued':
-        case 'waiting':
-             sClass = 'status-queued'; sIcon = 'fa-solid fa-clock text-gray-400'; sText = 'Đang chờ'; 
-             break;
+        case 'in_progress': sClass = 'status-running'; sIcon = 'fa-solid fa-gear fa-spin text-[var(--success-color)]'; sText = 'Job đang chạy'; break;
+        case 'queued': case 'waiting': sClass = 'status-queued'; sIcon = 'fa-solid fa-clock text-gray-400'; sText = 'Đang chờ'; break;
         case 'completed':
             switch(job.conclusion) {
-                case 'success':
-                    sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]'; sText = 'Thành công';
-                    break;
-                case 'failure':
-                    sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]'; sText = 'Thất bại';
-                    break;
-                case 'cancelled':
-                    sClass = 'status-error'; sIcon = 'fa-solid fa-ban text-[var(--warning-color)]'; sText = 'Đã hủy';
-                    break;
-                case 'timed_out':
-                    sClass = 'status-error'; sIcon = 'fa-solid fa-hourglass-end text-[var(--warning-color)]'; sText = 'Hết giờ';
-                    break;
-                case 'skipped':
-                    sClass = 'status-queued'; sIcon = 'fa-solid fa-forward text-gray-400'; sText = 'Đã bỏ qua';
-                    break;
-                default:
-                    sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-question-circle text-[var(--error-color)]'; sText = conclusionText || 'Không xác định';
-                    break;
+                case 'success': sClass = 'status-completed-success'; sIcon = 'fa-solid fa-check-circle text-[var(--success-color)]'; sText = 'Thành công'; break;
+                case 'failure': sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-xmark-circle text-[var(--error-color)]'; sText = 'Thất bại'; break;
+                case 'cancelled': sClass = 'status-error'; sIcon = 'fa-solid fa-ban text-[var(--warning-color)]'; sText = 'Đã hủy'; break;
+                case 'timed_out': sClass = 'status-error'; sIcon = 'fa-solid fa-hourglass-end text-[var(--warning-color)]'; sText = 'Hết giờ'; break;
+                case 'skipped': sClass = 'status-queued'; sIcon = 'fa-solid fa-forward text-gray-400'; sText = 'Đã bỏ qua'; break;
+                default: sClass = 'status-completed-failure'; sIcon = 'fa-solid fa-question-circle text-[var(--error-color)]'; sText = conclusionText || 'Không xác định'; break;
             }
             break;
-        case 'error': 
-            sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation text-[var(--warning-color)]'; sText = 'Lỗi'; 
-            break;
-        case 'awaiting_confirmation': 
-            sClass = 'status-queued'; sIcon = 'fa-solid fa-satellite-dish fa-spin'; sText = 'Đang xác nhận'; 
-            break;
+        case 'error': sClass = 'status-error'; sIcon = 'fa-solid fa-triangle-exclamation text-[var(--warning-color)]'; sText = 'Lỗi'; break;
+        case 'awaiting_confirmation': sClass = 'status-queued'; sIcon = 'fa-solid fa-satellite-dish fa-spin'; sText = 'Đang xác nhận'; break;
     }
-
     let actions = '';
     if (job.run_id) {
         if (!['completed', 'error'].includes(job.status)) { actions += `<button data-job-temp-id="${job.tempId}" class="cancel-btn px-2 py-1 text-xs rounded bg-yellow-600 text-white" title="Hủy Job"><i class="fas fa-stop"></i></button>`; }
@@ -426,30 +287,17 @@ function renderJobItem(job) {
 function renderJobs() {
     if (trackedJobs.length === 0) { el.jobListContainer.innerHTML = `<div class="card rounded-lg p-8 text-center text-[var(--text-secondary)]"><h3 class="text-2xl font-bold mb-4 text-[var(--text-primary)]">Chào mừng bạn!</h3><p class="mb-6">Chưa có job nào được chạy. Hãy làm theo hướng dẫn để bắt đầu.</p></div>`; updateFavicon(); return; }
     const jobsByOwner = trackedJobs.reduce((acc, job) => { const owner = job.owner || 'Unknown'; if (!acc[owner]) acc[owner] = []; acc[owner].push(job); return acc; }, {});
-    
     el.jobListContainer.innerHTML = '';
-
     Object.keys(jobsByOwner).sort().forEach(owner => {
         const isExpanded = trackedJobs.some(j => j.owner === owner && !['completed', 'error'].includes(j.status));
         const ownerGroup = document.createElement('div');
         ownerGroup.className = 'card rounded-lg overflow-hidden';
         ownerGroup.innerHTML = `<div class="owner-header p-4 flex justify-between items-center cursor-pointer" data-owner="${owner}"><div class="font-bold text-lg">${owner}</div><div class="flex items-center gap-4"><span class="active-count bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full"></span><span class="total-count bg-gray-600 text-white text-xs font-bold px-2 py-1 rounded-full"></span><i class="fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} chevron-icon"></i></div></div><div class="owner-jobs-content p-4 pt-0 space-y-2 ${isExpanded ? '' : 'hidden'}" data-owner="${owner}"></div>`;
-        
-        const ownerJobs = jobsByOwner[owner];
-        const awaiting = ownerJobs.filter(j => j.status === 'awaiting_confirmation')
-                                 .sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
-        
-        const confirmed = ownerJobs.filter(j => j.status !== 'awaiting_confirmation')
-                                 .sort((a, b) => (b.run_number || 0) - (a.run_number || 0));
-        
-        const jobs = [...awaiting, ...confirmed];
-
-        const activeJobCount = jobs.filter(j => !['completed', 'error'].includes(j.status)).length;
-        
-        ownerGroup.querySelector('.active-count').textContent = `${activeJobCount} Hoạt động`; ownerGroup.querySelector('.active-count').classList.toggle('hidden', activeJobCount === 0); ownerGroup.querySelector('.total-count').textContent = `${jobs.length} Tổng cộng`;
-        
+        const ownerJobs = jobsByOwner[owner].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+        const activeJobCount = ownerJobs.filter(j => !['completed', 'error'].includes(j.status)).length;
+        ownerGroup.querySelector('.active-count').textContent = `${activeJobCount} Hoạt động`; ownerGroup.querySelector('.active-count').classList.toggle('hidden', activeJobCount === 0); ownerGroup.querySelector('.total-count').textContent = `${ownerJobs.length} Tổng cộng`;
         const jobsContent = ownerGroup.querySelector('.owner-jobs-content');
-        jobs.forEach(job => {
+        ownerJobs.forEach(job => {
             const jobItem = document.createElement('div');
             jobItem.className = `card p-3 rounded-md job-item ${job.run_id ? 'job-item-clickable' : ''}`;
             jobItem.dataset.jobTempId = job.tempId;
@@ -473,56 +321,62 @@ async function processActionQueue() {
         return;
     }
     isProcessingQueue = true;
-
     const action = actionQueue.shift();
     const { type, payload } = action;
-
     try {
         switch (type) { case 'CREATE_JOB': await handleCreateJob(payload); break; case 'CANCEL_JOB': await handleCancelJob(payload); break; case 'RERUN_JOB': await handleRerunJob(payload); break; }
     } catch (e) { console.error(`Error processing action ${type}:`, e); }
-    
     setTimeout(() => { isProcessingQueue = false; processActionQueue(); }, ACTION_DELAY);
 }
 
 async function handleCreateJob(payload) {
-    const { token, owner, template, cmd, pin, repoUrl, withRerun, batch } = payload;
-    
+    const { token, owner, template, cmd, pin, repoUrl, withRerun, batch, windowsVersion } = payload;
     const job = { tempId: `job-${Date.now()}-${Math.random()}`, run_id: null, run_number: null, commit_sha: null, status: 'awaiting_confirmation', startTime: new Date(), name: `Đang chờ xác nhận...`, owner, token, batchId: batch.id };
-    trackedJobs.unshift(job); renderJobs(); saveState();
+    trackedJobs.unshift(job);
+    renderJobs();
+    saveState();
+    worker.postMessage({ type: 'UPDATE_JOBS_IN_WORKER', payload: { jobs: trackedJobs } });
 
     try {
         if (!batch.commit_sha) {
             showToast(`Đang cập nhật Workflow cho ${owner}...`, 'info');
             await githubApi(`/repos/${owner}/${REPO_NAME}`, token).catch(e => { if (e.status === 404) return githubApi("/user/repos", token, { method: "POST", body: JSON.stringify({ name: REPO_NAME, private: false }) }); throw e; });
-            const path = `.github/workflows/${WORKFLOW_NAME}`; const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
-            const content = getWorkflowContent(template, cmd, pin, repoUrl, withRerun); 
+            const path = `.github/workflows/${WORKFLOW_NAME}`;
+            const url = `/repos/${owner}/${REPO_NAME}/contents/${path}`;
+            const content = getWorkflowContent(template, cmd, pin, repoUrl, withRerun, windowsVersion);
             const base64Content = btoa(unescape(encodeURIComponent(content)));
-            let remoteFile; try { remoteFile = await githubApi(url, token); } catch (e) { if (e.status !== 404) throw e; }
-            
+            let remoteFile;
+            try { remoteFile = await githubApi(url, token); } catch (e) { if (e.status !== 404) throw e; }
             const updateFileResponse = await githubApi(url, token, { method: "PUT", body: JSON.stringify({ message: `ci: Trigger build batch`, content: base64Content, sha: remoteFile?.sha }) });
             batch.commit_sha = updateFileResponse.commit.sha;
         }
         job.commit_sha = batch.commit_sha;
         await githubApi(`/repos/${owner}/${REPO_NAME}/actions/workflows/${WORKFLOW_NAME}/dispatches`, token, { method: "POST", body: JSON.stringify({ ref: "main" }) });
-        startPolling();
+        worker.postMessage({ type: 'START_POLLING', payload: { jobs: trackedJobs } });
     } catch (e) {
-        job.status = 'error'; job.name = `Lỗi: ${e.message.slice(0, 20)}...`; job.errorMessage = e.message;
-        renderJobs(); saveState();
+        job.status = 'error';
+        job.name = `Lỗi: ${e.message.slice(0, 20)}...`;
+        job.errorMessage = e.message;
+        renderJobs();
+        saveState();
+        worker.postMessage({ type: 'UPDATE_JOBS_IN_WORKER', payload: { jobs: trackedJobs } });
         showToast(`Lỗi thiết lập cho ${owner}: ${e.message}`, 'error');
     }
 }
-async function handleCancelJob(payload) { const { job } = payload; try { await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}/cancel`, job.token, { method: "POST" }); job.status = 'completed'; job.conclusion = 'cancelled'; renderJobs(); saveState(); } catch(err) { showToast(`Lỗi khi hủy job #${job.run_id}: ${err.message}`, 'error'); } }
-async function handleRerunJob(payload) { const { job } = payload; try { await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}/rerun`, job.token, { method: "POST" }); showToast(`Đã yêu cầu chạy lại job #${job.run_id}`, 'info'); startPolling(); } catch(err) { showToast(`Lỗi khi chạy lại: ${err.message}`, 'error'); } }
+async function handleCancelJob(payload) { const { job } = payload; try { await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}/cancel`, job.token, { method: "POST" }); job.status = 'completed'; job.conclusion = 'cancelled'; renderJobs(); saveState(); worker.postMessage({ type: 'UPDATE_JOBS_IN_WORKER', payload: { jobs: trackedJobs } }); } catch(err) { showToast(`Lỗi khi hủy job #${job.run_id}: ${err.message}`, 'error'); } }
+async function handleRerunJob(payload) { const { job } = payload; try { await githubApi(`/repos/${job.owner}/${REPO_NAME}/actions/runs/${job.run_id}/rerun`, job.token, { method: "POST" }); showToast(`Đã yêu cầu chạy lại job #${job.run_id}`, 'info'); worker.postMessage({ type: 'START_POLLING', payload: { jobs: trackedJobs } }); } catch(err) { showToast(`Lỗi khi chạy lại: ${err.message}`, 'error'); } }
 
 // --- Event Listeners ---
 document.addEventListener('DOMContentLoaded', () => {
+    setupWorker();
     const savedTheme = localStorage.getItem('theme') || 'dark'; document.documentElement.setAttribute('data-theme', savedTheme); el.themeToggleBtn.innerHTML = savedTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-    loadState(); updateUIForTemplate();
+    loadState();
+    updateUIForTemplate();
 
     async function handleDeployClick(runsPerToken, withRerun = false) {
         const tokens = el.tokenInput.value.trim().split('\n').map(t => t.trim()).filter(Boolean);
         if (tokens.length === 0) { showToast("Vui lòng nhập ít nhất một GitHub token.", "error"); return; }
-        const cmd = el.deployCmdInput.value; const pin = el.accessPinInput.value.trim(); const template = el.templateSelect.value; const repoUrl = el.customRepoUrl.value;
+        const cmd = el.deployCmdInput.value; const pin = el.accessPinInput.value.trim() || '123456'; const template = el.templateSelect.value; const repoUrl = el.customRepoUrl.value; const windowsVersion = el.windowsVersionSelect.value;
         if (template === 'crd-windows' && !cmd) { showToast("Vui lòng nhập Lệnh triển khai CRD.", "error"); return; }
         
         const allBtns = [el.runOnceBtn, el.run5Btn, el.run5WaitBtn];
@@ -542,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast(`Đã thêm ${jobsToCreate} job cho ${ownerData.login} vào hàng đợi.`, 'success');
             const batch = { id: Date.now(), commit_sha: null }; 
             for (let i = 0; i < jobsToCreate; i++) {
-                actionQueue.push({ type: 'CREATE_JOB', payload: { token, owner: ownerData.login, template, cmd, pin, repoUrl, withRerun, batch }});
+                actionQueue.push({ type: 'CREATE_JOB', payload: { token, owner: ownerData.login, template, cmd, pin, repoUrl, withRerun, batch, windowsVersion }});
             }
         }
         
@@ -550,7 +404,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (template === 'crd-windows') el.deployCmdInput.value = '';
     }
 
-    el.runOnceBtn.addEventListener('click', () => handleDeployClick(1)); el.run5Btn.addEventListener('click', () => handleDeployClick(5)); el.run5WaitBtn.addEventListener('click', () => handleDeployClick(5, true));
+    el.runOnceBtn.addEventListener('click', () => handleDeployClick(1));
+    el.run5Btn.addEventListener('click', () => handleDeployClick(5));
+    el.run5WaitBtn.addEventListener('click', () => handleDeployClick(5, true));
     el.selectAllCheckbox.addEventListener('change', () => { const isChecked = el.selectAllCheckbox.checked; document.querySelectorAll('.job-checkbox').forEach(box => box.checked = isChecked); document.querySelectorAll('.job-item').forEach(item => item.classList.toggle('selected', isChecked)); });
     
     el.deleteSelectedBtn.addEventListener('click', async () => { 
@@ -567,7 +423,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const nonActiveJobsToDelete = jobsToDelete.filter(j => !activeJobsToCancel.includes(j));
             trackedJobs = trackedJobs.filter(job => !nonActiveJobsToDelete.some(del => del.tempId === job.tempId)); 
-            renderJobs(); saveState(); 
+            renderJobs(); 
+            saveState(); 
+            worker.postMessage({ type: 'UPDATE_JOBS_IN_WORKER', payload: { jobs: trackedJobs } });
         } 
     });
 
@@ -580,8 +438,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     el.quickCancelBtn.addEventListener('click', quickCancelAll);
 
-    el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Đang làm mới trạng thái...", "info"); apiCache = {}; await pollJobStatuses(); setTimeout(() => icon.classList.remove('fa-spin'), 500); });
-    el.clearHistoryBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build? Hành động này không thể hoàn tác.')) { trackedJobs = []; saveState(); renderJobs(); showToast('Lịch sử đã được xóa.', 'info'); } });
+    el.refreshBtn.addEventListener('click', async () => { const icon = el.refreshBtn.querySelector('i'); icon.classList.add('fa-spin'); showToast("Đang làm mới trạng thái...", "info"); if (worker) { worker.postMessage({ type: 'START_POLLING', payload: { jobs: trackedJobs } }); } setTimeout(() => icon.classList.remove('fa-spin'), 500); });
+    el.clearHistoryBtn.addEventListener('click', () => { if(confirm('Bạn có chắc muốn xóa toàn bộ lịch sử build? Hành động này không thể hoàn tác.')) { trackedJobs = []; saveState(); renderJobs(); if (worker) { worker.postMessage({ type: 'UPDATE_JOBS_IN_WORKER', payload: { jobs: trackedJobs } }); } showToast('Lịch sử đã được xóa.', 'info'); } });
     el.themeToggleBtn.addEventListener('click', () => { const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = newTheme; localStorage.setItem('theme', newTheme); el.themeToggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>'; });
     
     el.jobListContainer.addEventListener('click', async e => {
@@ -612,7 +470,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     el.jobListContainer.addEventListener('click', e => { const header = e.target.closest('.owner-header'); if(header) { const owner = header.dataset.owner; const content = el.jobListContainer.querySelector(`.owner-jobs-content[data-owner="${owner}"]`); content.classList.toggle('hidden'); header.querySelector('.chevron-icon').classList.toggle('fa-chevron-up'); header.querySelector('.chevron-icon').classList.toggle('fa-chevron-down'); }});
     el.templateSelect.addEventListener('change', updateUIForTemplate);
-    [el.tokenInput, el.accessPinInput, el.templateSelect].forEach(input => input.addEventListener('change', saveState));
+    [el.tokenInput, el.accessPinInput, el.templateSelect, el.windowsVersionSelect].forEach(input => input.addEventListener('change', saveState));
     el.tokenProtectCheckbox.addEventListener('change', () => { el.tokenInput.classList.toggle('token-protected', el.tokenProtectCheckbox.checked); saveState(); });
     el.modalCloseBtn.addEventListener('click', () => closeModal(el.modal, el.modalOverlay));
     el.modalOverlay.addEventListener('click', () => closeModal(el.modal, el.modalOverlay));
@@ -625,12 +483,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
     el.tokenInput.addEventListener('input', () => {
         if (el.tokenInput.value.includes('dev')) {
-            el.hiddenIframe.style.display = 'block';
         } else {
-            el.hiddenIframe.style.display = 'none';
         }
     });
 });
+</script>
+<script>
+    // Anti-copy script made by devTeo
+    document.addEventListener('contextmenu', event => event.preventDefault());
+    document.addEventListener('keydown', function(e) {
+        if (e.key == 'F12' || (e.ctrlKey && e.shiftKey && (e.key == 'I' || e.key == 'J' || e.key == 'C')) || (e.ctrlKey && (e.key == 'U' || e.key == 'S'))) {
+            e.preventDefault();
+        }
+    });
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+    document.body.style.mozUserSelect = 'none';
+    document.body.style.msUserSelect = 'none';
+
+    const watermark = document.createElement('div');
+    watermark.innerHTML = '&#169; made by devTeo'; // Use innerHTML to render copyright symbol
+    watermark.style.position = 'fixed';
+    watermark.style.bottom = '15px';
+    watermark.style.right = '15px';
+    watermark.style.padding = '8px 12px';
+    watermark.style.background = 'linear-gradient(135deg, rgba(42, 43, 61, 0.7), rgba(31, 28, 44, 0.7))';
+    watermark.style.color = '#e0e0e0';
+    watermark.style.borderRadius = '8px';
+    watermark.style.zIndex = '10001';
+    watermark.style.fontSize = '13px';
+    watermark.style.fontFamily = "'Inter', sans-serif, system-ui";
+    watermark.style.pointerEvents = 'none';
+    watermark.style.backdropFilter = 'blur(5px)';
+    watermark.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+    watermark.style.boxShadow = '0 4px 10px rgba(0, 0, 0, 0.3)';
+    watermark.style.opacity = '0';
+    watermark.style.transition = 'opacity 0.5s ease-in-out';
+    document.body.appendChild(watermark);
+    setTimeout(() => { watermark.style.opacity = '1'; }, 500); // Fade in effect
 </script>
 </body>
 </html>
